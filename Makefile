@@ -3,7 +3,7 @@ CXX_RELEASE_FLAGS=-O3
 CXX_DEBUG_FLAGS=-g #-fsanitize=undefined -fsanitize=address 
 CC=clang++
 
-default: compiler-debug
+default: compiler
 
 compiler: compiler.cpp
 	$(CC) $(CXX_FLAGS) $(CXX_RELEASE_FLAGS) compiler.cpp -o compiler.out

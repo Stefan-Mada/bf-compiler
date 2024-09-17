@@ -26,8 +26,6 @@ void interpret(const string& code) {
   unsigned char tape[TAPE_SIZE]{};
   size_t index = TAPE_SIZE / 2;
 
-  stack<size_t> loopStartStack;
-
   for(size_t IP = 0; IP < code.size(); ++IP) {
     const unsigned char op = static_cast<unsigned char>(code[IP]);
     switch(op) {
@@ -66,25 +64,33 @@ void interpret(const string& code) {
         break;
       } 
       case '[': {
-        if(loopStartStack.size() == 0 || loopStartStack.top() != IP)
-          loopStartStack.push(IP);
-
         if(tape[index] == 0) {
-          while(code[IP] != ']') {
-            if(++IP >= code.size()) {
-              cerr << "Could not find matching ]" << endl;
-              exit(-1);
-            }
+          int innerLoopStartsSeen = 0;
+          while(code[IP] != ']' || innerLoopStartsSeen != 1) {
+            if(code[IP] == '[') // will always start at 1
+              ++innerLoopStartsSeen;
+            else if(code[IP] == ']')
+              --innerLoopStartsSeen;
+
+            ++IP;
           }
-          --IP; // loop will increment this
+          --IP; // loop will increment this by 1 on iteration
         }
         break;
       } 
       case ']': {
-        if(tape[index] != 0)
-          IP = loopStartStack.top() - 1;
-        else
-          loopStartStack.pop();
+        if(tape[index] != 0) {
+          int innerLoopEndsSeen = 0;
+          while(code[IP] != '[' || innerLoopEndsSeen != 1) {
+            if(code[IP] == ']') // will always start at 1
+              ++innerLoopEndsSeen;
+            else if(code[IP] == '[')
+              --innerLoopEndsSeen;
+
+            --IP;
+          }
+          --IP; // loop will increment this by 1 on iteration
+        }
         break;
       } 
       default: {
