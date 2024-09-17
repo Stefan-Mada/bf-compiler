@@ -6,3 +6,7 @@ $ make
 
 $ ./compiler.out <insert bf file here>
 ```
+
+## Timing (Mandelbrot)
+Before anything: 44.63s
+After pre-computing loop jumps: 24.38s

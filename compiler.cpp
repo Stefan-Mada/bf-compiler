@@ -1,5 +1,7 @@
 #include <iostream>
 #include <fstream>
+#include <unordered_map>
+#include <stack>
 
 using namespace std;
 
@@ -20,10 +22,28 @@ string readFile(string fileName) {
   return code;
 }
 
+unordered_map<size_t, size_t> initializeLoopBrackets(const string& code) {
+  stack<size_t> leftBrackLocs;
+  unordered_map<size_t, size_t> loopMap;
+  for(size_t i = 0; i < code.size(); ++i) {
+    if(code[i] == '[')
+      leftBrackLocs.push(i);
+    else if(code[i] == ']') {
+      loopMap[leftBrackLocs.top()] = i;
+      loopMap[i] = leftBrackLocs.top();
+      leftBrackLocs.pop();
+    }
+  }
+
+  return loopMap;
+}
+
 void interpret(const string& code) {
   constexpr size_t TAPE_SIZE = 10000;
   unsigned char tape[TAPE_SIZE]{};
   size_t index = TAPE_SIZE / 2;
+
+  unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBrackets(code);
 
   for(size_t IP = 0; IP < code.size(); ++IP) {
     const unsigned char op = static_cast<unsigned char>(code[IP]);
@@ -64,31 +84,13 @@ void interpret(const string& code) {
       } 
       case '[': {
         if(tape[index] == 0) {
-          int innerLoopStartsSeen = 0;
-          while(code[IP] != ']' || innerLoopStartsSeen != 1) {
-            if(code[IP] == '[') // will always start at 1
-              ++innerLoopStartsSeen;
-            else if(code[IP] == ']')
-              --innerLoopStartsSeen;
-
-            ++IP;
-          }
-          --IP; // loop will increment this by 1 on iteration
+          IP = matchingLoopBracket[IP] - 1;
         }
         break;
       } 
       case ']': {
         if(tape[index] != 0) {
-          int innerLoopEndsSeen = 0;
-          while(code[IP] != '[' || innerLoopEndsSeen != 1) {
-            if(code[IP] == ']') // will always start at 1
-              ++innerLoopEndsSeen;
-            else if(code[IP] == '[')
-              --innerLoopEndsSeen;
-
-            --IP;
-          }
-          --IP; // loop will increment this by 1 on iteration
+          IP = matchingLoopBracket[IP] - 1;
         }
         break;
       } 
