@@ -8,5 +8,6 @@ $ ./compiler.out <insert bf file here>
 ```
 
 ## Timing (Mandelbrot)
-Before anything: 44.63s
-After pre-computing loop jumps: 24.38s
+- Before anything: 44.63s
+- After pre-computing loop jumps: 24.38s
+- After indirect gotos / threaded interpreter: 18.15s

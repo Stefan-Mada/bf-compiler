@@ -14,7 +14,8 @@ enum Op {
   Write,
   Read,
   JumpIfZero,
-  JumpUnlessZero
+  JumpUnlessZero,
+  EndOfFile
 };
 
 vector<Op> readFile(string fileName) {
@@ -59,6 +60,8 @@ vector<Op> readFile(string fileName) {
     }
   }
 
+  retVec.push_back(EndOfFile);
+
   return retVec;
 }
 
@@ -85,60 +88,62 @@ void interpret(const vector<Op>& ops) {
 
   unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBrackets(ops);
 
-  for(size_t IP = 0; IP < ops.size(); ++IP) {
-    Op op = ops[IP];
-    switch(op) {
-      case MoveRight: {
-        if(index >= TAPE_SIZE - 1) {
-          cerr << "Overflowed tape size" << endl;
-          exit(-1);
-        }
-        ++index;
-        break;
-      } 
-      case MoveLeft: {
-        if(index == 0) {
-          cerr << "Underflowed tape size" << endl;
-          exit(-1);
-        }
-        --index;
-        break;
-      } 
-      case Inc: {
-        ++tape[index];
-        break;
-      } 
-      case Dec: {
-        --tape[index];
-        break;
-      } 
-      case Write: {
-        cout << tape[index];
-        break;
-      } 
-      case Read: {
-        unsigned char val;
-        cin >> val;
-        tape[index] = val;
-        break;
-      } 
-      case JumpIfZero: {
-        if(tape[index] == 0) {
-          IP = matchingLoopBracket[IP] - 1;
-        }
-        break;
-      } 
-      case JumpUnlessZero: {
-        if(tape[index] != 0) {
-          IP = matchingLoopBracket[IP] - 1;
-        }
-        break;
-      } 
-      default: {
-        continue;
-      }
+  static const void* jumpTable[] = {&&LabMoveRight, &&LabMoveLeft, &&LabInc, &&LabDec, &&LabWrite, 
+                                    &&LabRead, &&LabJumpIfZero, &&LabJumpUnlessZero, &&LabEndOfFile};
+
+  size_t IP = 0;
+  goto *jumpTable[ops[IP]];
+
+LabMoveRight: {
+    if(index >= TAPE_SIZE - 1) {
+      cerr << "Overflowed tape size" << endl;
+      exit(-1);
     }
-  }
+    ++index;
+    goto *jumpTable[ops[++IP]];
+  } 
+LabMoveLeft: {
+    if(index == 0) {
+      cerr << "Underflowed tape size" << endl;
+      exit(-1);
+    }
+    --index;
+    goto *jumpTable[ops[++IP]];
+  } 
+LabInc: {
+    ++tape[index];
+    goto *jumpTable[ops[++IP]];
+  } 
+LabDec: {
+    --tape[index];
+    goto *jumpTable[ops[++IP]];
+  } 
+LabWrite: {
+    cout << tape[index];
+    goto *jumpTable[ops[++IP]];
+  } 
+LabRead: {
+    unsigned char val;
+    cin >> val;
+    tape[index] = val;
+    goto *jumpTable[ops[++IP]];
+  } 
+LabJumpIfZero: {
+    if(tape[index] == 0) {
+      IP = matchingLoopBracket[IP];
+      goto *jumpTable[ops[IP]];
+    }
+    goto *jumpTable[ops[++IP]];
+  } 
+LabJumpUnlessZero: {
+    if(tape[index] != 0) {
+      IP = matchingLoopBracket[IP];
+      goto *jumpTable[ops[IP]];
+    }
+    goto *jumpTable[ops[++IP]];
+  } 
+LabEndOfFile:
+  return;
 }
 
 int main(int argc, char** argv) {
