@@ -3,8 +3,14 @@
 #include <unordered_map>
 #include <stack>
 #include <vector>
+#include <utility>
+#include <array>
+#include <algorithm>
 
 using namespace std;
+
+static bool profile = 0;
+
 
 enum Op {
   MoveRight,
@@ -17,6 +23,10 @@ enum Op {
   JumpUnlessZero,
   EndOfFile
 };
+
+array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
+array<size_t, EndOfFile> instrFreq;
+
 
 vector<Op> readFile(string fileName) {
   ifstream fileStream(fileName);
@@ -99,6 +109,8 @@ LabMoveRight: {
       cerr << "Overflowed tape size" << endl;
       exit(-1);
     }
+    if(profile)
+      ++instrFreq[MoveRight];
     ++index;
     goto *jumpTable[ops[++IP]];
   } 
@@ -107,28 +119,46 @@ LabMoveLeft: {
       cerr << "Underflowed tape size" << endl;
       exit(-1);
     }
+    if(profile)
+      ++instrFreq[MoveLeft];
+
     --index;
     goto *jumpTable[ops[++IP]];
   } 
 LabInc: {
+    if(profile)
+      ++instrFreq[Inc];
+
     ++tape[index];
     goto *jumpTable[ops[++IP]];
   } 
 LabDec: {
+    if(profile)
+      ++instrFreq[Dec];
+
     --tape[index];
     goto *jumpTable[ops[++IP]];
   } 
 LabWrite: {
+    if(profile)
+      ++instrFreq[Write];
+
     cout << tape[index];
     goto *jumpTable[ops[++IP]];
   } 
 LabRead: {
+    if(profile)
+      ++instrFreq[Read];
+
     unsigned char val;
     cin >> val;
     tape[index] = val;
     goto *jumpTable[ops[++IP]];
   } 
 LabJumpIfZero: {
+    if(profile)
+      ++instrFreq[JumpIfZero];
+
     if(tape[index] == 0) {
       IP = matchingLoopBracket[IP];
       goto *jumpTable[ops[IP]];
@@ -136,6 +166,9 @@ LabJumpIfZero: {
     goto *jumpTable[ops[++IP]];
   } 
 LabJumpUnlessZero: {
+    if(profile)
+      ++instrFreq[JumpUnlessZero];
+
     if(tape[index] != 0) {
       IP = matchingLoopBracket[IP];
       goto *jumpTable[ops[IP]];
@@ -147,13 +180,35 @@ LabEndOfFile:
 }
 
 int main(int argc, char** argv) {
-  if(argc != 2) {
-    cerr << "Need exactly one file argument to interpret" << endl;
+  if(argc != 2 && argc != 3) {
+    cerr << "Need exactly one file argument to interpret, optional -p parameter first" << endl;
     exit(-1);
   }
 
-  const vector<Op> ops = readFile(argv[1]);
+  if(argc == 3 && string(argv[1]) != "-p") {
+    cerr << "Second parameter must be -p" << endl;
+    exit(-1);
+  }
+  else if (argc == 3)
+    profile = true;
+
+
+  const vector<Op> ops = readFile(argv[argc - 1]);
 
   interpret(ops);
+
+  if(profile) {
+    cout << "\n\n=====PROFILING=====\n";
+    vector<pair<char, size_t>> instrFreqVec;
+    for(size_t instrType = 0; instrType < EndOfFile; ++instrType) {
+      instrFreqVec.push_back({enumToChar[instrType], instrFreq[instrType]});
+    }
+
+    sort(instrFreqVec.begin(), instrFreqVec.end(), [&](auto a, auto b){return a.second > b.second;});
+
+    for(const auto& [op, freq] : instrFreqVec) {
+      cout << op << " : " << freq << "\n";
+    }
+  }
 }
 
