@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <stack>
 #include <vector>
 #include <utility>
@@ -26,6 +27,10 @@ enum Op {
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
 array<size_t, EndOfFile> instrFreq;
+
+unordered_map<string, size_t> loopFreq;
+unordered_map<size_t, string> loopAtIndex;
+unordered_map<string, bool> isSimpleLoop;
 
 
 vector<Op> readFile(string fileName) {
@@ -75,16 +80,58 @@ vector<Op> readFile(string fileName) {
   return retVec;
 }
 
+bool checkSimpleLoop(const vector<Op>& code) {
+  int currMemOffset = 0;
+  int currBaseInc = 0;
+  for(const auto& op : code) {
+    if(op == Read || op == Write)
+      return false;
+
+    if(op == MoveRight)
+      ++currMemOffset;
+    else if(op == MoveLeft)
+      --currMemOffset;
+    else if(currMemOffset == 0 && op == Inc)
+      ++currBaseInc;
+    else if(currMemOffset == 0 && op == Dec)
+      --currBaseInc;
+  }
+
+  if(currBaseInc != -1 && currBaseInc != 1)
+    return false;
+
+  return currMemOffset == 0;
+}
+
 unordered_map<size_t, size_t> initializeLoopBrackets(const vector<Op>& code) {
   stack<size_t> leftBrackLocs;
   unordered_map<size_t, size_t> loopMap;
+  bool canBeInnerLoop = false;
+
   for(size_t i = 0; i < code.size(); ++i) {
-    if(code[i] == JumpIfZero)
+    if(code[i] == JumpIfZero) {
       leftBrackLocs.push(i);
+
+      canBeInnerLoop = true;
+    }
     else if(code[i] == JumpUnlessZero) {
-      loopMap[leftBrackLocs.top()] = i;
-      loopMap[i] = leftBrackLocs.top();
+      const size_t lhs = leftBrackLocs.top();
+      loopMap[lhs] = i;
+      loopMap[i] = lhs;
       leftBrackLocs.pop();
+
+      if(profile && canBeInnerLoop) {
+        const vector<Op> loopCode = vector(code.begin() + static_cast<long>(lhs), code.begin() + static_cast<long>(i) + 1);
+        vector<char> loopChars(loopCode.size());
+        transform(loopCode.cbegin(), loopCode.cend(), loopChars.begin(), [&](Op a){return enumToChar[a];});
+        string loopString(loopChars.begin(), loopChars.end());
+
+        loopAtIndex[lhs] = loopString;
+        loopFreq[loopString] = 0;
+        isSimpleLoop[loopString] = checkSimpleLoop(loopCode);
+      }
+
+      canBeInnerLoop = false;
     }
   }
 
@@ -163,6 +210,9 @@ LabJumpIfZero: {
       IP = matchingLoopBracket[IP];
       goto *jumpTable[ops[IP]];
     }
+    else if(profile && loopAtIndex.count(IP))
+      ++loopFreq[loopAtIndex[IP]];
+
     goto *jumpTable[ops[++IP]];
   } 
 LabJumpUnlessZero: {
@@ -208,6 +258,30 @@ int main(int argc, char** argv) {
 
     for(const auto& [op, freq] : instrFreqVec) {
       cout << op << " : " << freq << "\n";
+    }
+
+    // now onto loops
+
+    vector<pair<string, size_t>> simpleLoopFreq, complexLoopFreq;
+
+    for(const auto& [loop, freq] : loopFreq) {
+      if(isSimpleLoop[loop])
+        simpleLoopFreq.push_back({loop, freq});
+      else
+        complexLoopFreq.push_back({loop, freq});
+    }
+
+    sort(simpleLoopFreq.begin(), simpleLoopFreq.end(), [&](auto a, auto b){return a.second > b.second;});
+    sort(complexLoopFreq.begin(), complexLoopFreq.end(), [&](auto a, auto b){return a.second > b.second;});
+
+    cout << "\n===Simple Loops===\n";
+    for(const auto& [loop, freq] : simpleLoopFreq) {
+      cout << loop << " : " << freq << "\n";
+    }
+
+    cout << "\n===Complex Loops===\n";
+    for(const auto& [loop, freq] : complexLoopFreq) {
+      cout << loop << " : " << freq << "\n";
     }
   }
 }
