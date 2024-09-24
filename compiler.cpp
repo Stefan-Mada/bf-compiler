@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <stack>
@@ -20,7 +21,8 @@ enum Op {
   JumpIfZero,
   JumpUnlessZero,
   EndOfFile,
-  NotAnOp
+  Zero,
+  SimpleLoop
 };
 
 string instrStr(const string& str) {
@@ -132,11 +134,35 @@ struct EndOfFileInstr : public virtual Instr {
 };
 
 struct ZeroInstr : public virtual Instr {
-  ZeroInstr() {op = NotAnOp;}
+  ZeroInstr() {op = Zero;}
 
   string str() const override {
     return instrStr("movb\t$0, (%rdi)");
   }
+};
+
+// Must maintain the loop bounds here, this goes between
+struct SimpleLoopInstr : public virtual Instr {
+  SimpleLoopInstr(const unordered_map<int64_t,int64_t>& memoryOffsetIncrement, const bool increments) 
+                  : memoryOffsetIncrement(memoryOffsetIncrement), increments(increments) {op = SimpleLoop;}
+
+  string str() const override {
+    string assembly;
+    for(const auto& [offset, amount] : memoryOffsetIncrement) {
+      assembly += instrStr("addb\t$"+to_string(amount)+", "+to_string(offset)+"(%rdi)");
+    }
+
+    if(increments)
+      assembly += instrStr("incb\t(%rdi)");
+    else
+      assembly += instrStr("decb\t(%rdi)");
+
+    return assembly;
+  }
+
+private:
+  unordered_map<int64_t, int64_t> memoryOffsetIncrement;
+  bool increments;
 };
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
@@ -315,8 +341,69 @@ vector<unique_ptr<Instr>> removeZeroLoops(vector<unique_ptr<Instr>>& instrs) {
   return std::move(instrs);
 }
 
+optional<SimpleLoopInstr> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
+  int currMemOffset = 0;
+  unordered_map<int64_t, int64_t> incrementAtOffset;
+
+  for(size_t i = begin; i < end; ++i) {
+    const Op op = instrs.at(i)->op;
+    if(op == MoveRight)
+      ++currMemOffset;
+    else if(op == MoveLeft)
+      --currMemOffset;
+    else if(op == Inc)
+      ++incrementAtOffset[currMemOffset];
+    else if(op == Dec) 
+      --incrementAtOffset[currMemOffset];
+    else
+      return {};
+  }
+
+  if(!incrementAtOffset.count(0))
+    return {};
+
+  if(incrementAtOffset[0] != 1 && incrementAtOffset[0] != -1)
+    return {};
+
+  if(currMemOffset != 0)
+    return {};
+
+  bool increments = incrementAtOffset[0] == 1;
+  incrementAtOffset.erase(0);
+
+  return SimpleLoopInstr(incrementAtOffset, increments);
+}
+
+
+vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs) {
+  bool canBeSimpleLoop = false;
+  size_t lhsIndex = 0;
+  for(size_t i = 0; i < instrs.size() - 2; ++i) {
+    if(instrs[i]->op == JumpIfZero) {
+      canBeSimpleLoop = true;
+      lhsIndex = i;
+    }
+    else if(instrs[i]->op == JumpUnlessZero) {
+      auto loopInstr = checkSimpleLoop(instrs, lhsIndex + 1, i);
+      if(loopInstr) {
+        long lhsIterOffset = static_cast<long>(lhsIndex);
+        long iterOffset = static_cast<long>(i);
+
+        instrs.erase(instrs.begin() + lhsIterOffset + 1, instrs.begin() + iterOffset);
+        instrs.insert(instrs.begin() + lhsIterOffset + 1, make_unique<SimpleLoopInstr>(loopInstr.value()));
+        i = lhsIndex + 2;
+      }
+      canBeSimpleLoop = false;
+    }
+  }
+  
+  return std::move(instrs);
+}
+
+
 vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs) {
-  return removeZeroLoops(instrs);
+  auto noZeroLoopInstrs = removeZeroLoops(instrs);
+  return simplifySimpleLoops(noZeroLoopInstrs);
 }
 
 string compile(const vector<unique_ptr<Instr>>& instrs) {
