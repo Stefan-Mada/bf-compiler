@@ -167,7 +167,11 @@ string compile(const vector<Op>& ops) {
         break;
       }
       case Read: {
-        throw std::invalid_argument("Not implemented");
+        assembly += instrStr("push\t%rdi");
+        assembly += instrStr("call\tgetchar");
+        assembly += instrStr("pop\t%rdi");
+        assembly += instrStr("movb\t%al, (%rdi)");
+        break;
       }
       case JumpIfZero: {
         const string thisLabel = ownLabelMap.at(IP);
