@@ -145,6 +145,14 @@ string compile(const vector<Op>& ops) {
         assembly += instrStr("dec\t%rdi");
         break;
       }
+      case Inc: {
+        assembly += instrStr("incb\t(%rdi)");
+        break;
+      }
+      case Dec: {
+        assembly += instrStr("decb\t(%rdi)");
+        break;
+      }
       case EndOfFile: {
         assembly += instrStr("ret");
         break;
