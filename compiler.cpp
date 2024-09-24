@@ -110,12 +110,13 @@ pair<unordered_map<size_t, string>, unordered_map<size_t, string>> initializeLoo
 string initializeProgram() {
   constexpr size_t TAPESIZE = 10'000;
   static_assert(TAPESIZE % 2 == 0, "Tapesize must be even to by symmetric");
-  
+  // use calloc to initialize all memory to 0
   return ".global main\n"
         "main:\n"
         "\tsubq\t$8, %rsp\n"
         "\tmovl\t$"+to_string(TAPESIZE)+", %edi\n"
-        "\tcall\tmalloc\n"
+        "\tmovl\t$1, %esi\n"
+        "\tcall\tcalloc\n"
         "\tleaq\t"+to_string(TAPESIZE/2)+"(%rax), %rdi\n"
         "\tcall\tbf_main\n"
         "\tmovl\t$0, %eax\n"
