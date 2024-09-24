@@ -36,4 +36,4 @@ $ ./interpreter.out -p myfile.bf
 ## Compiler Timing
 ### Timing (Mandelbrot)
 - Before anything: 4.41s
-
+- After simplifying zero loops: 4.38s

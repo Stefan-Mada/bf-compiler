@@ -6,6 +6,7 @@
 #include <vector>
 #include <utility>
 #include <array>
+#include <memory>
 
 using namespace std;
 
@@ -18,7 +19,124 @@ enum Op {
   Read,
   JumpIfZero,
   JumpUnlessZero,
-  EndOfFile
+  EndOfFile,
+  NotAnOp
+};
+
+string instrStr(const string& str) {
+  return "\t" + str + "\n";
+}
+
+struct Instr {
+  virtual string str() const = 0;
+  virtual ~Instr() {}
+  Op op;
+};
+
+struct MoveRightInstr : public virtual Instr {
+  MoveRightInstr() {op = MoveRight;}
+
+  string str() const override {
+    return instrStr("inc\t%rdi");
+  }
+};
+
+struct MoveLeftInstr : public virtual Instr {
+  MoveLeftInstr() {op = MoveLeft;}
+
+  string str() const override {
+    return instrStr("dec\t%rdi");
+  }
+};
+
+struct IncInstr : public virtual Instr {
+  IncInstr() {op = Inc;}
+
+  string str() const override {
+    return instrStr("incb\t(%rdi)");
+  }
+};
+
+struct DecInstr : public virtual Instr {
+  DecInstr() {op = Dec;}
+
+  string str() const override {
+    return instrStr("decb\t(%rdi)");
+  }
+};
+
+struct WriteInstr : public virtual Instr {
+  WriteInstr() {op = Write;}
+
+  string str() const override {
+    string assembly;
+    assembly += instrStr("push\t%rdi");
+    assembly += instrStr("movb\t(%rdi), %dil");
+    assembly += instrStr("call\tputchar");
+    assembly += instrStr("pop\t%rdi");
+    return assembly;
+  }
+};
+
+struct ReadInstr : public virtual Instr {
+  ReadInstr() {op = Read;}
+
+  string str() const override {
+    string assembly;
+    assembly += instrStr("push\t%rdi");
+    assembly += instrStr("call\tgetchar");
+    assembly += instrStr("pop\t%rdi");
+    assembly += instrStr("movb\t%al, (%rdi)");
+    return assembly;
+  }
+};
+
+struct JumpIfZeroInstr : public virtual Instr {
+  JumpIfZeroInstr(const string& ownLabel, const string& targetLabel)
+                : ownLabel(ownLabel), targetLabel(targetLabel) {op = JumpIfZero;}
+
+  string str() const override {
+    string assembly;
+    assembly += ownLabel + ":\n";
+    assembly += instrStr("cmpb\t$0, (%rdi)");
+    assembly += instrStr("je\t"+targetLabel);
+    return assembly;
+  }
+
+private:
+  string ownLabel, targetLabel;
+};
+
+struct JumpUnlessZeroInstr : public virtual Instr {
+  JumpUnlessZeroInstr(const string& ownLabel, const string& targetLabel)
+                : ownLabel(ownLabel), targetLabel(targetLabel) {op = JumpUnlessZero;}
+
+  string str() const override {
+    string assembly;
+    assembly += ownLabel + ":\n";
+    assembly += instrStr("cmpb\t$0, (%rdi)");
+    assembly += instrStr("jne\t"+targetLabel);
+    return assembly;
+  }
+
+private:
+  string ownLabel, targetLabel;
+};
+
+struct EndOfFileInstr : public virtual Instr {
+  EndOfFileInstr() {op = EndOfFile;}
+
+  string str() const override {
+    return instrStr("ret");
+  }
+};
+
+struct ZeroInstr : public virtual Instr {
+  ZeroInstr() {op = NotAnOp;}
+
+  string str() const override {
+    return instrStr("movb\t$0, (%rdi)");
+  }
 };
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
@@ -124,71 +242,56 @@ string initializeProgram() {
         "bf_main:\n";
 }
 
-string instrStr(const string& str) {
-  return "\t" + str + "\n";
-}
-
-string compile(const vector<Op>& ops) {
-  string assembly = initializeProgram();
-
+vector<unique_ptr<Instr>> parse(const vector<Op>& ops) {
   // Note: %rdi will hold the current index on the tape
   // Except when calling putchar or getchar, then %rdi
   // will be pushed onto the stack
 
   const auto& [matchingBracketLabelMap, ownLabelMap] = initializeLoopBracketLabels(ops);
+  vector<unique_ptr<Instr>> instructions;
 
   for(size_t IP = 0; IP < ops.size(); ++IP) {
     const Op currInstr = ops[IP];
 
     switch(currInstr) {
       case MoveRight: {
-        assembly += instrStr("inc\t%rdi");
+        instructions.push_back(make_unique<MoveRightInstr>());
         break;
       }
       case MoveLeft: {
-        assembly += instrStr("dec\t%rdi");
+        instructions.push_back(make_unique<MoveLeftInstr>());
         break;
       }
       case Inc: {
-        assembly += instrStr("incb\t(%rdi)");
+        instructions.push_back(make_unique<IncInstr>());
         break;
       }
       case Dec: {
-        assembly += instrStr("decb\t(%rdi)");
+        instructions.push_back(make_unique<DecInstr>());
         break;
       }
       case Write: {
-        assembly += instrStr("push\t%rdi");
-        assembly += instrStr("movb\t(%rdi), %dil");
-        assembly += instrStr("call\tputchar");
-        assembly += instrStr("pop\t%rdi");
+        instructions.push_back(make_unique<WriteInstr>());
         break;
       }
       case Read: {
-        assembly += instrStr("push\t%rdi");
-        assembly += instrStr("call\tgetchar");
-        assembly += instrStr("pop\t%rdi");
-        assembly += instrStr("movb\t%al, (%rdi)");
+        instructions.push_back(make_unique<ReadInstr>());
         break;
       }
       case JumpIfZero: {
         const string thisLabel = ownLabelMap.at(IP);
         const string targetLabel = matchingBracketLabelMap.at(IP);
-        assembly += thisLabel + ":\n";
-        assembly += instrStr("cmpb\t$0, (%rdi)");
-        assembly += instrStr("je\t"+targetLabel);
+        instructions.push_back(make_unique<JumpIfZeroInstr>(thisLabel, targetLabel));
         break;
       }
       case JumpUnlessZero: {
         const string thisLabel = ownLabelMap.at(IP);
         const string targetLabel = matchingBracketLabelMap.at(IP);
-        assembly += thisLabel + ":\n";
-        assembly += instrStr("cmpb\t$0, (%rdi)");
-        assembly += instrStr("jne\t"+targetLabel);
+        instructions.push_back(make_unique<JumpUnlessZeroInstr>(thisLabel, targetLabel));
         break;
       }
       case EndOfFile: {
-        assembly += instrStr("ret");
+        instructions.push_back(make_unique<EndOfFileInstr>());
         break;
       }
       default: {
@@ -197,6 +300,30 @@ string compile(const vector<Op>& ops) {
     }
   }
 
+  return instructions;
+}
+
+vector<unique_ptr<Instr>> removeZeroLoops(vector<unique_ptr<Instr>>& instrs) {
+  for(size_t i = 0; i < instrs.size() - 2; ++i) {
+    long iterOffset = static_cast<long>(i);
+    if(instrs[i]->op == JumpIfZero && (instrs[i + 1]->op == Dec || instrs[i + 1]->op == Inc) && instrs[i + 2]->op == JumpUnlessZero) {
+      instrs.erase(instrs.begin() + iterOffset, instrs.begin() + iterOffset + 3);
+      instrs.insert(instrs.begin() + iterOffset, make_unique<ZeroInstr>());
+    }
+  }
+  
+  return std::move(instrs);
+}
+
+vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs) {
+  return removeZeroLoops(instrs);
+}
+
+string compile(const vector<unique_ptr<Instr>>& instrs) {
+  string assembly = initializeProgram();
+  for(const auto& instr : instrs) {
+    assembly += instr->str();
+  }
   return assembly;
 }
 
@@ -208,7 +335,11 @@ int main(int argc, char** argv) {
 
   const vector<Op> ops = readFile(argv[argc - 1]);
 
-  string program = compile(ops);
+  vector<unique_ptr<Instr>> instrs = parse(ops);
+
+  instrs = optimize(instrs);
+
+  string program = compile(instrs);
 
   cout << program << endl;
 }
