@@ -131,6 +131,10 @@ string instrStr(const string& str) {
 string compile(const vector<Op>& ops) {
   string assembly = initializeProgram();
 
+  // Note: %rdi will hold the current index on the tape
+  // Except when calling putchar or getchar, then %rdi
+  // will be pushed onto the stack
+
   const auto& [matchingBracketLabelMap, ownLabelMap] = initializeLoopBracketLabels(ops);
 
   for(size_t IP = 0; IP < ops.size(); ++IP) {
@@ -151,6 +155,13 @@ string compile(const vector<Op>& ops) {
       }
       case Dec: {
         assembly += instrStr("decb\t(%rdi)");
+        break;
+      }
+      case Write: {
+        assembly += instrStr("push\t%rdi");
+        assembly += instrStr("movb\t(%rdi), %dil");
+        assembly += instrStr("call\tputchar");
+        assembly += instrStr("pop\t%rdi");
         break;
       }
       case EndOfFile: {
