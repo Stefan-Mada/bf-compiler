@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <stack>
@@ -162,6 +163,25 @@ string compile(const vector<Op>& ops) {
         assembly += instrStr("movb\t(%rdi), %dil");
         assembly += instrStr("call\tputchar");
         assembly += instrStr("pop\t%rdi");
+        break;
+      }
+      case Read: {
+        throw std::invalid_argument("Not implemented");
+      }
+      case JumpIfZero: {
+        const string thisLabel = ownLabelMap.at(IP);
+        const string targetLabel = matchingBracketLabelMap.at(IP);
+        assembly += thisLabel + ":\n";
+        assembly += instrStr("cmpb\t$0, (%rdi)");
+        assembly += instrStr("je\t"+targetLabel);
+        break;
+      }
+      case JumpUnlessZero: {
+        const string thisLabel = ownLabelMap.at(IP);
+        const string targetLabel = matchingBracketLabelMap.at(IP);
+        assembly += thisLabel + ":\n";
+        assembly += instrStr("cmpb\t$0, (%rdi)");
+        assembly += instrStr("jne\t"+targetLabel);
         break;
       }
       case EndOfFile: {
