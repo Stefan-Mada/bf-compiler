@@ -1,13 +1,11 @@
 #include <iostream>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <stack>
 #include <vector>
 #include <utility>
 #include <array>
-#include <algorithm>
 
 using namespace std;
 
