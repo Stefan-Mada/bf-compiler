@@ -22,7 +22,9 @@ enum Op {
   JumpUnlessZero,
   EndOfFile,
   Zero,
-  SimpleLoop
+  SimpleLoop,
+  Sum,
+  MulAdd
 };
 
 string instrStr(const string& str) {
@@ -141,28 +143,39 @@ struct ZeroInstr : public virtual Instr {
   }
 };
 
-// Must maintain the loop bounds here, this goes between
-struct SimpleLoopInstr : public virtual Instr {
-  SimpleLoopInstr(const unordered_map<int64_t,int64_t>& memoryOffsetIncrement, const bool increments) 
-                  : memoryOffsetIncrement(memoryOffsetIncrement), increments(increments) {op = SimpleLoop;}
+struct SumInstr : public virtual Instr {
+  SumInstr(const int64_t amount, const int64_t offset)
+          : amount(amount), offset(offset) {op = Sum;}
 
   string str() const override {
+    const string offsetStr = (offset == 0) ? "" : to_string(offset);
+    
+    return instrStr("addb\t$"+to_string(amount)+", "+offsetStr+"(%rdi)");
+  }
+private:
+  int64_t amount;
+  int64_t offset;
+};
+
+struct MulAddInstr : public virtual Instr {
+  MulAddInstr(const int64_t amount, const int64_t offset, const bool posInc)
+          : amount(amount), offset(offset), posInc(posInc) {op = MulAdd;}
+
+  string str() const override {
+    const string offsetStr = (offset == 0) ? "" : to_string(offset);
     string assembly;
-    for(const auto& [offset, amount] : memoryOffsetIncrement) {
-      assembly += instrStr("addb\t$"+to_string(amount)+", "+to_string(offset)+"(%rdi)");
-    }
-
-    if(increments)
-      assembly += instrStr("incb\t(%rdi)");
-    else
-      assembly += instrStr("decb\t(%rdi)");
-
+    assembly += instrStr("movb\t(%rdi), %al");
+    if(posInc)
+      assembly += instrStr("xorb\t$-1, %al");
+    assembly += instrStr("movb\t$"+to_string(amount)+", %r10b");
+    assembly += instrStr("mulb\t%r10b");
+    assembly += instrStr("addb\t%al, "+offsetStr+"(%rdi)");
     return assembly;
   }
-
 private:
-  unordered_map<int64_t, int64_t> memoryOffsetIncrement;
-  bool increments;
+  int64_t amount;
+  int64_t offset;
+  bool posInc;
 };
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
@@ -341,7 +354,34 @@ vector<unique_ptr<Instr>> removeZeroLoops(vector<unique_ptr<Instr>>& instrs) {
   return std::move(instrs);
 }
 
-optional<SimpleLoopInstr> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
+// Assumes loop has no IO and pointer always go back to start
+// Generates only instructions inside the loop, not loops brackets
+vector<unique_ptr<Instr>> generateSimplifiedLoopInstrs(const unordered_map<int64_t,int64_t>& incrementAtOffset) {
+  vector<unique_ptr<Instr>> newInstrs;
+
+  const int64_t inducInc = incrementAtOffset.at(0);
+
+
+  // This is a loop that we can't remove the brackets from
+  if(inducInc != 1 && inducInc != -1) {
+    for(const auto& [offset, amount] : incrementAtOffset) {
+      newInstrs.push_back(make_unique<SumInstr>(amount, offset));
+    }
+  }
+  else { // truly simple loop
+    for(const auto& [offset, amount] : incrementAtOffset) {
+      if(offset == 0)
+        continue;
+      const bool posInc = inducInc > 0;
+      newInstrs.push_back(make_unique<MulAddInstr>(amount, offset, posInc));
+    }
+    newInstrs.push_back(make_unique<ZeroInstr>());
+  }
+
+  return newInstrs;
+}
+
+optional<vector<unique_ptr<Instr>>> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
   int currMemOffset = 0;
   unordered_map<int64_t, int64_t> incrementAtOffset;
 
@@ -355,6 +395,8 @@ optional<SimpleLoopInstr> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, con
       ++incrementAtOffset[currMemOffset];
     else if(op == Dec) 
       --incrementAtOffset[currMemOffset];
+    else if(op == JumpIfZero || op == JumpUnlessZero)
+      continue;
     else
       return {};
   }
@@ -362,36 +404,43 @@ optional<SimpleLoopInstr> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, con
   if(!incrementAtOffset.count(0))
     return {};
 
-  if(incrementAtOffset[0] != 1 && incrementAtOffset[0] != -1)
-    return {};
+  // don't check that increments by 1 or -1, can still simplify those instructions somewhat
 
   if(currMemOffset != 0)
     return {};
 
-  bool increments = incrementAtOffset[0] == 1;
-  incrementAtOffset.erase(0);
+  auto newLoopInstrs = generateSimplifiedLoopInstrs(incrementAtOffset);
+  const int64_t inducInc = incrementAtOffset.at(0);
 
-  return SimpleLoopInstr(incrementAtOffset, increments);
+  // can't remove loop bounds
+  if(inducInc != 1 && inducInc != -1) {
+    newLoopInstrs.insert(newLoopInstrs.begin(), std::move(instrs.at(begin)));
+    newLoopInstrs.insert(newLoopInstrs.end(), std::move(instrs.at(end - 1)));
+  }
+
+  return newLoopInstrs;
 }
 
 
 vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs) {
   bool canBeSimpleLoop = false;
   size_t lhsIndex = 0;
+
   for(size_t i = 0; i < instrs.size() - 2; ++i) {
     if(instrs[i]->op == JumpIfZero) {
       canBeSimpleLoop = true;
       lhsIndex = i;
     }
-    else if(instrs[i]->op == JumpUnlessZero) {
-      auto loopInstr = checkSimpleLoop(instrs, lhsIndex + 1, i);
+    else if(instrs[i]->op == JumpUnlessZero && canBeSimpleLoop) {
+      auto loopInstr = checkSimpleLoop(instrs, lhsIndex, i + 1);
       if(loopInstr) {
         long lhsIterOffset = static_cast<long>(lhsIndex);
         long iterOffset = static_cast<long>(i);
+        auto& loopInstrs = loopInstr.value();
 
-        instrs.erase(instrs.begin() + lhsIterOffset + 1, instrs.begin() + iterOffset);
-        instrs.insert(instrs.begin() + lhsIterOffset + 1, make_unique<SimpleLoopInstr>(loopInstr.value()));
-        i = lhsIndex + 2;
+        instrs.erase(instrs.begin() + lhsIterOffset, instrs.begin() + iterOffset + 1);
+        instrs.insert(instrs.begin() + lhsIterOffset, make_move_iterator(loopInstrs.begin()), make_move_iterator(loopInstrs.end()));
+        i = static_cast<size_t>(lhsIterOffset + (loopInstrs.end() - loopInstrs.begin()));
       }
       canBeSimpleLoop = false;
     }
@@ -414,13 +463,35 @@ string compile(const vector<unique_ptr<Instr>>& instrs) {
   return assembly;
 }
 
+bool checkValidInstrs(const vector<Op>& ops) {
+  stack<Op> lhsBrackets;
+
+  for(const auto op : ops) {
+    if(op == JumpIfZero)
+      lhsBrackets.push(op);
+    else if(op == JumpUnlessZero) {
+      if(lhsBrackets.empty())
+        return false;
+
+      lhsBrackets.pop();
+    }
+  }
+
+  return true;
+}
+
 int main(int argc, char** argv) {
-  if(argc != 2 ) {
-    cerr << "Need exactly one file argument to compile" << endl;
+  if(argc != 2 && argc != 3) {
+    cerr << "Need exactly one file argument to compile with possible opt flag" << endl;
     exit(-1);
   }
 
   const vector<Op> ops = readFile(argv[argc - 1]);
+
+  if(!checkValidInstrs(ops)) {
+    cerr << "Loop brackets do not match, aborting." << endl;
+    exit(-1);
+  }
 
   vector<unique_ptr<Instr>> instrs = parse(ops);
 
