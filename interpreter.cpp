@@ -138,7 +138,7 @@ unordered_map<size_t, size_t> initializeLoopBrackets(const vector<Op>& code) {
 }
 
 void interpret(const vector<Op>& ops) {
-  constexpr size_t TAPE_SIZE = 10000;
+  constexpr size_t TAPE_SIZE = 40000;
   unsigned char tape[TAPE_SIZE]{};
   size_t index = TAPE_SIZE / 2;
 
@@ -196,9 +196,7 @@ LabRead: {
     if(profile)
       ++instrFreq[Read];
 
-    unsigned char val;
-    cin >> val;
-    tape[index] = val;
+    tape[index] = getchar();
     goto *jumpTable[ops[++IP]];
   } 
 LabJumpIfZero: {
