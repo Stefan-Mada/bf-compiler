@@ -24,7 +24,8 @@ enum Op {
   Zero,
   SimpleLoop,
   Sum,
-  MulAdd
+  MulAdd,
+  AddMemPtr
 };
 
 string instrStr(const string& str) {
@@ -176,6 +177,17 @@ private:
   int64_t amount;
   int64_t offset;
   bool posInc;
+};
+
+struct AddMemPointerInstr : public virtual Instr {
+  AddMemPointerInstr(const int64_t amount)
+          : amount(amount) {op = AddMemPtr;}
+
+  string str() const override {    
+    return instrStr("add\t$"+to_string(amount)+", %rdi");
+  }
+private:
+  int64_t amount;
 };
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
@@ -449,10 +461,56 @@ vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs)
   return std::move(instrs);
 }
 
+vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs) {
+  int currMemOffset = 0;
+  unordered_map<int64_t, int64_t> incrementAtOffset;
+
+  size_t lhs = 0;
+  for(size_t rhs = 0; rhs < instrs.size(); ++rhs) {
+    const Op op = instrs.at(rhs)->op;
+    if(op == MoveRight)
+      ++currMemOffset;
+    else if(op == MoveLeft)
+      --currMemOffset;
+    else if(op == Inc)
+      ++incrementAtOffset[currMemOffset];
+    else if(op == Dec) 
+      --incrementAtOffset[currMemOffset];
+    else if(rhs < lhs + 2) { // >[>.
+      lhs = rhs + 1;
+      incrementAtOffset.clear();
+      currMemOffset = 0;
+    }
+    else{
+      vector<unique_ptr<Instr>> newInstrs;
+      for(const auto& [offset, amount] : incrementAtOffset) {
+        newInstrs.push_back(make_unique<SumInstr>(amount, offset));
+      }
+
+      if(currMemOffset != 0)
+        newInstrs.push_back(make_unique<AddMemPointerInstr>(currMemOffset));
+
+      long lhsIterOffset = static_cast<long>(lhs);
+      long rhsIterOffset = static_cast<long>(rhs);
+
+      instrs.erase(instrs.begin() + lhsIterOffset, instrs.begin() + rhsIterOffset);
+      instrs.insert(instrs.begin() + lhsIterOffset, make_move_iterator(newInstrs.begin()), make_move_iterator(newInstrs.end()));
+
+      lhs = static_cast<size_t>(lhsIterOffset + (newInstrs.end() - newInstrs.begin())) + 1;
+      rhs = lhs - 1;
+      incrementAtOffset.clear();
+      currMemOffset = 0;    
+    }
+  }
+
+  return std::move(instrs);
+}
+
 
 vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs) {
   auto noZeroLoopInstrs = removeZeroLoops(instrs);
-  return simplifySimpleLoops(noZeroLoopInstrs);
+  auto simplifiedLoops = simplifySimpleLoops(noZeroLoopInstrs);
+  return instCombine(simplifiedLoops);
 }
 
 string compile(const vector<unique_ptr<Instr>>& instrs) {

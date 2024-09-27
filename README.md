@@ -37,4 +37,6 @@ $ ./interpreter.out -p myfile.bf
 ### Timing (Mandelbrot)
 - Before anything: 4.41s
 - After simplifying zero loops: 4.38s
-- After simplifying simple inner loops: 3.99s
+- After inst combine on inner loops: 3.99s
+- After removing simple inner loops: 2.29s
+- After adding instcombine for >,<,+,- instructions: 0.71s
