@@ -354,41 +354,19 @@ vector<unique_ptr<Instr>> parse(const vector<Op>& ops) {
   return instructions;
 }
 
-vector<unique_ptr<Instr>> removeZeroLoops(vector<unique_ptr<Instr>>& instrs) {
-  for(size_t i = 0; i < instrs.size() - 2; ++i) {
-    long iterOffset = static_cast<long>(i);
-    if(instrs[i]->op == JumpIfZero && (instrs[i + 1]->op == Dec || instrs[i + 1]->op == Inc) && instrs[i + 2]->op == JumpUnlessZero) {
-      instrs.erase(instrs.begin() + iterOffset, instrs.begin() + iterOffset + 3);
-      instrs.insert(instrs.begin() + iterOffset, make_unique<ZeroInstr>());
-    }
-  }
-  
-  return std::move(instrs);
-}
-
-// Assumes loop has no IO and pointer always go back to start
 // Generates only instructions inside the loop, not loops brackets
 vector<unique_ptr<Instr>> generateSimplifiedLoopInstrs(const unordered_map<int64_t,int64_t>& incrementAtOffset) {
   vector<unique_ptr<Instr>> newInstrs;
 
   const int64_t inducInc = incrementAtOffset.at(0);
 
-
-  // This is a loop that we can't remove the brackets from
-  if(inducInc != 1 && inducInc != -1) {
-    for(const auto& [offset, amount] : incrementAtOffset) {
-      newInstrs.push_back(make_unique<SumInstr>(amount, offset));
-    }
+  for(const auto& [offset, amount] : incrementAtOffset) {
+    if(offset == 0)
+      continue;
+    const bool posInc = inducInc > 0;
+    newInstrs.push_back(make_unique<MulAddInstr>(amount, offset, posInc));
   }
-  else { // truly simple loop
-    for(const auto& [offset, amount] : incrementAtOffset) {
-      if(offset == 0)
-        continue;
-      const bool posInc = inducInc > 0;
-      newInstrs.push_back(make_unique<MulAddInstr>(amount, offset, posInc));
-    }
-    newInstrs.push_back(make_unique<ZeroInstr>());
-  }
+  newInstrs.push_back(make_unique<ZeroInstr>());
 
   return newInstrs;
 }
@@ -416,19 +394,14 @@ optional<vector<unique_ptr<Instr>>> checkSimpleLoop(vector<unique_ptr<Instr>>& i
   if(!incrementAtOffset.count(0))
     return {};
 
-  // don't check that increments by 1 or -1, can still simplify those instructions somewhat
+  const int64_t inducInc = incrementAtOffset.at(0);
+  if(inducInc != 1 && inducInc != -1)
+    return {};
 
   if(currMemOffset != 0)
     return {};
 
   auto newLoopInstrs = generateSimplifiedLoopInstrs(incrementAtOffset);
-  const int64_t inducInc = incrementAtOffset.at(0);
-
-  // can't remove loop bounds
-  if(inducInc != 1 && inducInc != -1) {
-    newLoopInstrs.insert(newLoopInstrs.begin(), std::move(instrs.at(begin)));
-    newLoopInstrs.insert(newLoopInstrs.end(), std::move(instrs.at(end - 1)));
-  }
 
   return newLoopInstrs;
 }
@@ -506,10 +479,8 @@ vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs) {
   return std::move(instrs);
 }
 
-
 vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs) {
-  auto noZeroLoopInstrs = removeZeroLoops(instrs);
-  auto simplifiedLoops = simplifySimpleLoops(noZeroLoopInstrs);
+  auto simplifiedLoops = simplifySimpleLoops(instrs);
   return instCombine(simplifiedLoops);
 }
 
