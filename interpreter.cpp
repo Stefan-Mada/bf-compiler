@@ -138,7 +138,7 @@ unordered_map<size_t, size_t> initializeLoopBrackets(const vector<Op>& code) {
 }
 
 void interpret(const vector<Op>& ops) {
-  constexpr size_t TAPE_SIZE = 40000;
+  constexpr size_t TAPE_SIZE = 320'000;
   unsigned char tape[TAPE_SIZE]{};
   size_t index = TAPE_SIZE / 2;
 
