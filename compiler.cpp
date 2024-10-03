@@ -1,15 +1,109 @@
+#include <cctype>
 #include <iostream>
 #include <fstream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <stack>
+#include <unordered_set>
 #include <vector>
 #include <utility>
 #include <array>
 #include <memory>
+#include <functional>
 
 using namespace std;
+
+// Handle CLI arguments
+
+// https://blog.vito.nyc/posts/min-guide-to-cli/
+struct MySettings {
+  bool help{false};
+  bool simplifySimpleLoops {true};
+  bool vectorizeMemScans {true};
+  bool runInstCombine {true};
+  optional<string> infile;
+  optional<string> outfile;
+};
+
+bool stringToBool(string str) {
+  const string original = str;
+  transform(str.begin(), str.end(), str.begin(), ::tolower);
+  const unordered_set<string> trueOptions = {"true", "yes", "1"};
+  const unordered_set<string> falseOptions = {"false", "no", "0"};
+
+  if(trueOptions.find(str) != trueOptions.end())
+    return true;
+  else if(falseOptions.find(str) != falseOptions.end())
+    return false;
+  else {
+    cerr << "Unable to parse boolean " << original << ", exiting." << endl;
+    exit(-1);
+  }
+}
+
+typedef function<void(MySettings&)> NoArgHandle;
+
+#define S(str, f, v) {str, [](MySettings& s) {s.f = v;}}
+const unordered_map<string, NoArgHandle> NoArgs {
+  S("--help", help, true),
+  S("-h", help, true),
+};
+#undef S
+
+typedef function<void(MySettings&, const string&)> OneArgHandle;
+
+#define S(str, f, v) \
+  {str, [](MySettings& s, const string& arg) { s.f = v; }}
+
+const unordered_map<string, OneArgHandle> OneArgs {
+  S("--simplify-loops", simplifySimpleLoops, stringToBool(arg)),
+
+  S("--vectorize-mem-scans", vectorizeMemScans, stringToBool(arg)),
+
+  S("--run-inst-combine", runInstCombine, stringToBool(arg)),
+
+  S("-o", outfile, arg)
+};
+#undef S
+
+MySettings parse_settings(int argc, const char* const* const argv) {
+  MySettings settings;
+
+  // argv[0] is traditionally the program name, so start at 1
+  for(int i {1}; i < argc; i++) {
+    string opt {argv[i]};
+
+    // Is this a NoArg?
+    if(auto j {NoArgs.find(opt)}; j != NoArgs.end())
+      j->second(settings); // Yes, handle it!
+
+    // No, how about a OneArg?
+    else if(auto k {OneArgs.find(opt)}; k != OneArgs.end())
+      // Yes, do we have a parameter?
+      if(++i < argc)
+        // Yes, handle it!
+        k->second(settings, {argv[i]});
+      else
+        // No, and we cannot continue, throw an error
+        throw std::runtime_error {"missing param after " + opt};
+
+    // No, has infile been set yet?
+    else if(!settings.infile)
+      // No, use this as the input file
+      settings.infile = argv[i];
+
+    // Yes, possibly throw here, or just print an error
+    else
+      cerr << "unrecognized command-line option " << opt << endl;
+  }
+
+  return settings;
+}
+
+// end CLI arguments
+
 
 enum Op {
   MoveRight,
@@ -193,7 +287,12 @@ private:
 
 struct MemScanInstr : public virtual Instr {
   MemScanInstr(const int64_t stride)
-          : stride(stride) {op = MemScan;}
+          : stride(stride) {
+    op = MemScan;
+
+    if(!validStride(stride))
+      throw invalid_argument("Memscan stride of " + to_string(stride) + " is not supported");
+  }
 
   string str() const override {
     string assembly;
@@ -201,11 +300,18 @@ struct MemScanInstr : public virtual Instr {
     assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
     if(stride == 2)
       assembly += instrStr("vpand\t.STRIDE2MASK(%rip), %ymm0, %ymm0");
+    else if(stride == 4)
+      assembly += instrStr("vpand\t.STRIDE4MASK(%rip), %ymm0, %ymm0");
     assembly += instrStr("vpmovmskb\t%ymm0, %r10");
     assembly += instrStr("tzcntl\t%r10d, %r10d");
     assembly += instrStr("add\t%r10, %rdi");
     return assembly;
   }
+
+  static constexpr bool validStride(const int64_t stride) {
+    return stride == 1 || stride == 2 || stride == 4;
+  }
+
 private:
   int64_t stride;
 };
@@ -328,6 +434,39 @@ string intializeVectorMasks() {
 	"\t.byte	255                             # 0xff\n" \
 	"\t.byte	0                               # 0x0\n" \
 	"\t.byte	255                             # 0xff\n" \
+  "\t.byte	0                               # 0x0\n" \
+  ".STRIDE4MASK:\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	0                             # 0xff\n" \
   "\t.byte	0                               # 0x0\n";
 }
 
@@ -441,7 +580,7 @@ vector<unique_ptr<Instr>> generateMemScanInstructions(vector<unique_ptr<Instr>>&
 }
 
 
-optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
+optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end, const MySettings& settings) {
   int currMemOffset = 0;
   unordered_map<int64_t, int64_t> incrementAtOffset;
 
@@ -462,8 +601,11 @@ optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<I
   }
 
   // Memory scan loops that go up by 1 and don't change any values
-  if((currMemOffset == 1 || currMemOffset == 2) && incrementAtOffset.empty())
+  if(settings.vectorizeMemScans && MemScanInstr::validStride(currMemOffset) && incrementAtOffset.empty())
     return generateMemScanInstructions(instrs, begin, end, currMemOffset);
+
+  if(!settings.simplifySimpleLoops)
+    return {};
 
   if(!incrementAtOffset.count(0))
     return {};
@@ -481,7 +623,10 @@ optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<I
 }
 
 
-vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs) {
+vector<unique_ptr<Instr>> simplifyLoops(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
+  if(!settings.simplifySimpleLoops && !settings.vectorizeMemScans)
+    return std::move(instrs);
+
   bool canBeSimpleLoop = false;
   size_t lhsIndex = 0;
 
@@ -491,7 +636,7 @@ vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs)
       lhsIndex = i;
     }
     else if(instrs[i]->op == JumpUnlessZero && canBeSimpleLoop) {
-      auto loopInstr = checkSimpleOrMemScanLoop(instrs, lhsIndex, i + 1);
+      auto loopInstr = checkSimpleOrMemScanLoop(instrs, lhsIndex, i + 1, settings);
       if(loopInstr) {
         long lhsIterOffset = static_cast<long>(lhsIndex);
         long iterOffset = static_cast<long>(i);
@@ -508,7 +653,10 @@ vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs)
   return std::move(instrs);
 }
 
-vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs) {
+vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
+  if(!settings.runInstCombine)
+    return std::move(instrs);
+
   int currMemOffset = 0;
   unordered_map<int64_t, int64_t> incrementAtOffset;
 
@@ -553,9 +701,9 @@ vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs) {
   return std::move(instrs);
 }
 
-vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs) {
-  auto simplifiedLoops = simplifySimpleLoops(instrs);
-  return instCombine(simplifiedLoops);
+vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
+  auto simplifiedLoops = simplifyLoops(instrs, settings);
+  return instCombine(simplifiedLoops, settings);
 }
 
 string compile(const vector<unique_ptr<Instr>>& instrs) {
@@ -584,12 +732,26 @@ bool checkValidInstrs(const vector<Op>& ops) {
 }
 
 int main(int argc, char** argv) {
-  if(argc != 2 && argc != 3) {
-    cerr << "Need exactly one file argument to compile with possible opt flag" << endl;
+  MySettings settings = parse_settings(argc, argv);
+
+  if(settings.help) {
+    cout << "Usage: " << argv[0] << " " << "<input> [options]\n\n";
+    cout << "Options:\n";
+    cout << "These options take no arguments after them:\n";
+    for(const auto& [key, value] : NoArgs)
+      cout << "\t" << key << "\n";
+
+    cout << "These options take one argument after them:\n";
+    for(const auto& [key, value] : OneArgs)
+      cout << "\t" << key << "\n";  
+  }
+
+  if(!settings.infile) {
+    cerr << "Need an input bf program to read, aborting." << endl;
     exit(-1);
   }
 
-  const vector<Op> ops = readFile(argv[argc - 1]);
+  const vector<Op> ops = readFile(settings.infile.value());
 
   if(!checkValidInstrs(ops)) {
     cerr << "Loop brackets do not match, aborting." << endl;
@@ -598,10 +760,16 @@ int main(int argc, char** argv) {
 
   vector<unique_ptr<Instr>> instrs = parse(ops);
 
-  instrs = optimize(instrs);
+  instrs = optimize(instrs, settings);
 
   string program = compile(instrs);
 
-  cout << program << endl;
+  if(!settings.outfile)
+    cout << program << endl;
+  else {
+    ofstream MyFile(settings.outfile.value());
+    MyFile << program << endl;
+    MyFile.close();
+  }
 }
 
