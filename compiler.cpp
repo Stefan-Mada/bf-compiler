@@ -326,7 +326,7 @@ struct MemScanInstr : public virtual Instr {
   }
 
   static constexpr bool validStride(const int64_t stride) {
-    return stride == 1 || stride == 2 || stride == 4 || stride == -1;
+    return stride == 1 || stride == 2 || stride == 4; //|| stride == -1;
   }
 
 private:
@@ -588,27 +588,15 @@ vector<unique_ptr<Instr>> generateSimplifiedLoopInstrs(const unordered_map<int64
 }
 
 // Generates loop brackets as well
-vector<unique_ptr<Instr>> generateMemScanInstructions(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end, const int64_t stride, const unordered_map<int64_t, int64_t>& incrementAtOffset) {
+vector<unique_ptr<Instr>> generateMemScanInstructions(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end, const int64_t stride) {
   vector<unique_ptr<Instr>> newInstrs;
+
   newInstrs.push_back(std::move(instrs[begin]));
-
-  for(const auto& [offset, amount] : incrementAtOffset)
-    newInstrs.push_back(make_unique<SumInstr>(amount, offset));
-
   newInstrs.push_back(make_unique<MemScanInstr>(stride));
   newInstrs.push_back(std::move(instrs[end - 1]));
 
   return newInstrs;
 }
-
-bool validOffsetsForMemScanStride(const int64_t stride, const unordered_map<int64_t, int64_t>& incrementAtOffset) {
-  for(const auto& [offset, amount] : incrementAtOffset) {
-    if(offset % stride == 0)
-      return false;
-  }
-  return true;
-}
-
 
 optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end, const MySettings& settings) {
   int currMemOffset = 0;
@@ -631,8 +619,8 @@ optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<I
   }
 
   // Memory scan loops that go up by 1 and don't change any values
-  if(settings.vectorizeMemScans && MemScanInstr::validStride(currMemOffset) && validOffsetsForMemScanStride(currMemOffset, incrementAtOffset))
-    return generateMemScanInstructions(instrs, begin, end, currMemOffset, incrementAtOffset);
+  if(settings.vectorizeMemScans && MemScanInstr::validStride(currMemOffset) && incrementAtOffset.empty())
+    return generateMemScanInstructions(instrs, begin, end, currMemOffset);
 
   if(!settings.simplifySimpleLoops)
     return {};
