@@ -199,6 +199,8 @@ struct MemScanInstr : public virtual Instr {
     string assembly;
     assembly += instrStr("vpxor\t%xmm0, %xmm0, %xmm0");
     assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
+    if(stride == 2)
+      assembly += instrStr("vpand\t.STRIDE2MASK(%rip), %ymm0, %ymm0");
     assembly += instrStr("vpmovmskb\t%ymm0, %r10");
     assembly += instrStr("tzcntl\t%r10d, %r10d");
     assembly += instrStr("add\t%r10, %rdi");
@@ -293,11 +295,49 @@ pair<unordered_map<size_t, string>, unordered_map<size_t, string>> initializeLoo
   return {loopMap, ownNameMap};
 }
 
+string intializeVectorMasks() {
+  return ".STRIDE2MASK:\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+	"\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n" \
+  "\t.byte	0                               # 0x0\n";
+}
+
 string initializeProgram() {
   constexpr size_t TAPESIZE = 320'000;
   static_assert(TAPESIZE % 2 == 0, "Tapesize must be even to by symmetric");
   // use calloc to initialize all memory to 0
-  return ".global main\n"
+  string vectorMasks = intializeVectorMasks();
+
+  return vectorMasks + ".global main\n"
         "main:\n"
         "\tsubq\t$8, %rsp\n"
         "\tmovl\t$"+to_string(TAPESIZE)+", %edi\n"
@@ -422,7 +462,7 @@ optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<I
   }
 
   // Memory scan loops that go up by 1 and don't change any values
-  if(currMemOffset == 1 && incrementAtOffset.empty())
+  if((currMemOffset == 1 || currMemOffset == 2) && incrementAtOffset.empty())
     return generateMemScanInstructions(instrs, begin, end, currMemOffset);
 
   if(!incrementAtOffset.count(0))
