@@ -25,7 +25,8 @@ enum Op {
   SimpleLoop,
   Sum,
   MulAdd,
-  AddMemPtr
+  AddMemPtr,
+  MemScan
 };
 
 string instrStr(const string& str) {
@@ -189,6 +190,24 @@ struct AddMemPointerInstr : public virtual Instr {
 private:
   int64_t amount;
 };
+
+struct MemScanInstr : public virtual Instr {
+  MemScanInstr(const int64_t stride)
+          : stride(stride) {op = MemScan;}
+
+  string str() const override {
+    string assembly;
+    assembly += instrStr("vpxor\t%xmm0, %xmm0, %xmm0");
+    assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
+    assembly += instrStr("vpmovmskb\t%ymm0, %r10");
+    assembly += instrStr("tzcntl\t%r10d, %r10d");
+    assembly += instrStr("add\t%r10, %rdi");
+    return assembly;
+  }
+private:
+  int64_t stride;
+};
+
 
 array<char, EndOfFile> enumToChar{{'>', '<', '+', '-', '.', ',', '[', ']'}};
 
@@ -371,7 +390,18 @@ vector<unique_ptr<Instr>> generateSimplifiedLoopInstrs(const unordered_map<int64
   return newInstrs;
 }
 
-optional<vector<unique_ptr<Instr>>> checkSimpleLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
+// Generates loop brackets as well
+vector<unique_ptr<Instr>> generateMemScanInstructions(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end, const int64_t offset) {
+  vector<unique_ptr<Instr>> newInstrs;
+  newInstrs.push_back(std::move(instrs[begin]));
+  newInstrs.push_back(make_unique<MemScanInstr>(offset));
+  newInstrs.push_back(std::move(instrs[end - 1]));
+
+  return newInstrs;
+}
+
+
+optional<vector<unique_ptr<Instr>>> checkSimpleOrMemScanLoop(vector<unique_ptr<Instr>>& instrs, const size_t begin, const size_t end) {
   int currMemOffset = 0;
   unordered_map<int64_t, int64_t> incrementAtOffset;
 
@@ -390,6 +420,10 @@ optional<vector<unique_ptr<Instr>>> checkSimpleLoop(vector<unique_ptr<Instr>>& i
     else
       return {};
   }
+
+  // Memory scan loops that go up by 1 and don't change any values
+  if(currMemOffset == 1 && incrementAtOffset.empty())
+    return generateMemScanInstructions(instrs, begin, end, currMemOffset);
 
   if(!incrementAtOffset.count(0))
     return {};
@@ -417,7 +451,7 @@ vector<unique_ptr<Instr>> simplifySimpleLoops(vector<unique_ptr<Instr>>& instrs)
       lhsIndex = i;
     }
     else if(instrs[i]->op == JumpUnlessZero && canBeSimpleLoop) {
-      auto loopInstr = checkSimpleLoop(instrs, lhsIndex, i + 1);
+      auto loopInstr = checkSimpleOrMemScanLoop(instrs, lhsIndex, i + 1);
       if(loopInstr) {
         long lhsIterOffset = static_cast<long>(lhsIndex);
         long iterOffset = static_cast<long>(i);
