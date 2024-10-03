@@ -326,7 +326,7 @@ struct MemScanInstr : public virtual Instr {
   }
 
   static constexpr bool validStride(const int64_t stride) {
-    return stride == 1 || stride == 2 || stride == 4; //|| stride == -1;
+    return stride == 1 || stride == 2 || stride == 4 || stride == -1 || stride == -2 || stride == -4;
   }
 
 private:
@@ -422,6 +422,7 @@ pair<unordered_map<size_t, string>, unordered_map<size_t, string>> initializeLoo
 string intializeVectorMasks() {
   return ".STRIDE2MASK:\n" \
 	"\t.byte	255                             # 0xff\n" \
+  ".STRIDE2MASKNEG:\n" \
 	"\t.byte	0                               # 0x0\n" \
 	"\t.byte	255                             # 0xff\n" \
 	"\t.byte	0                               # 0x0\n" \
@@ -453,8 +454,10 @@ string intializeVectorMasks() {
 	"\t.byte	0                               # 0x0\n" \
 	"\t.byte	255                             # 0xff\n" \
   "\t.byte	0                               # 0x0\n" \
+  "\t.byte	255                             # 0xff\n" \
   ".STRIDE4MASK:\n" \
 	"\t.byte	255                             # 0xff\n" \
+  ".STRIDE4MASKNEG:\n" \
 	"\t.byte	0                               # 0x0\n" \
 	"\t.byte	0                             # 0xff\n" \
 	"\t.byte	0                               # 0x0\n" \
@@ -485,7 +488,8 @@ string intializeVectorMasks() {
 	"\t.byte	255                             # 0xff\n" \
 	"\t.byte	0                               # 0x0\n" \
 	"\t.byte	0                             # 0xff\n" \
-  "\t.byte	0                               # 0x0\n";
+  "\t.byte	0                               # 0x0\n" \
+	"\t.byte	255                             # 0xff\n";
 }
 
 string initializeProgram() {
