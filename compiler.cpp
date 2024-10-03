@@ -287,7 +287,7 @@ private:
 
 struct MemScanInstr : public virtual Instr {
   MemScanInstr(const int64_t stride)
-          : stride(stride) {
+          : absoluteStride(abs(stride)), isNeg(stride < 0) {
     op = MemScan;
 
     if(!validStride(stride))
@@ -297,23 +297,40 @@ struct MemScanInstr : public virtual Instr {
   string str() const override {
     string assembly;
     assembly += instrStr("vpxor\t%xmm0, %xmm0, %xmm0");
-    assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
-    if(stride == 2)
+
+    if(isNeg) {
+      assembly += instrStr("mov\t%rdi, %r10");
+      assembly += instrStr("sub\t$31, %r10");
+      assembly += instrStr("vpcmpeqb\t(%r10), %ymm0, %ymm0");
+    }
+    else
+      assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
+
+    if(absoluteStride == 2)
       assembly += instrStr("vpand\t.STRIDE2MASK(%rip), %ymm0, %ymm0");
-    else if(stride == 4)
+    else if(absoluteStride == 4)
       assembly += instrStr("vpand\t.STRIDE4MASK(%rip), %ymm0, %ymm0");
+
+
     assembly += instrStr("vpmovmskb\t%ymm0, %r10");
-    assembly += instrStr("tzcntl\t%r10d, %r10d");
-    assembly += instrStr("add\t%r10, %rdi");
+    if(isNeg) {
+      assembly += instrStr("lzcntl\t%r10d, %r10d");
+      assembly += instrStr("sub\t%r10, %rdi");
+    }
+    else{ 
+      assembly += instrStr("tzcntl\t%r10d, %r10d");
+      assembly += instrStr("add\t%r10, %rdi");
+    }
     return assembly;
   }
 
   static constexpr bool validStride(const int64_t stride) {
-    return stride == 1 || stride == 2 || stride == 4;
+    return stride == 1 || stride == 2 || stride == 4 || stride == -1;
   }
 
 private:
-  int64_t stride;
+  int64_t absoluteStride;
+  bool isNeg;
 };
 
 
