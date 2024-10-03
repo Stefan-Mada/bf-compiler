@@ -261,8 +261,10 @@ struct MulAddInstr : public virtual Instr {
     const string offsetStr = (offset == 0) ? "" : to_string(offset);
     string assembly;
     assembly += instrStr("movb\t(%rdi), %al");
-    if(posInc)
+    if(posInc) {
       assembly += instrStr("xorb\t$-1, %al");
+      assembly += instrStr("addb\t$1, %al");
+    }
     assembly += instrStr("movb\t$"+to_string(amount)+", %r10b");
     assembly += instrStr("mulb\t%r10b");
     assembly += instrStr("addb\t%al, "+offsetStr+"(%rdi)");
@@ -306,11 +308,10 @@ struct MemScanInstr : public virtual Instr {
     else
       assembly += instrStr("vpcmpeqb\t(%rdi), %ymm0, %ymm0");
 
-    if(absoluteStride == 2)
-      assembly += instrStr("vpand\t.STRIDE2MASK(%rip), %ymm0, %ymm0");
-    else if(absoluteStride == 4)
-      assembly += instrStr("vpand\t.STRIDE4MASK(%rip), %ymm0, %ymm0");
-
+    if(absoluteStride != 1) {
+      const string maskLabel = ".STRIDE" + to_string(absoluteStride) + "MASK" + ((isNeg) ? "NEG" : "");
+      assembly += instrStr("vpand\t"+maskLabel+"(%rip), %ymm0, %ymm0");
+    }
 
     assembly += instrStr("vpmovmskb\t%ymm0, %r10");
     if(isNeg) {
