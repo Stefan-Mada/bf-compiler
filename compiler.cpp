@@ -771,18 +771,29 @@ unordered_map<size_t, size_t> initializeLoopBracketIndexes(vector<unique_ptr<Ins
   return matchingIndex;
 }
 
+bool loopContainsRead(const vector<unique_ptr<Instr>>& instrs, const size_t start) {
+  for(size_t i = start; i < instrs.size(); ++i) {
+    if(instrs.at(i)->op == Read)
+      return true;
+    else if(instrs.at(i)->op == JumpUnlessZero)
+      break;
+  }
+  return false;
+}
+
 vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
   if(!settings.partialEval)
     return std::move(instrs);
 
   unordered_map<int64_t, unsigned char> valAtOffset;
+  unordered_set<size_t> loopDoesntContainRead;
   int64_t offset = 0;
   int64_t curPartialEvalOffset = 0;
   vector<unique_ptr<Instr>> newInstrs;
 
   const unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBracketIndexes(instrs);
-
-  for(size_t IP = 0; IP < instrs.size(); ++IP) {
+  const size_t instrSize = instrs.size();
+  for(size_t IP = 0; IP < instrSize; ++IP) {
     const auto& instr = instrs[IP];
 
     switch(instr->op) {
@@ -808,9 +819,37 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
         curPartialEvalOffset = offset;
         break;
       case Read:
-        throw invalid_argument("Don't support reads in partial evaluator");
+        for(const auto [memOffset, val] : valAtOffset) {
+          newInstrs.push_back(make_unique<AddMemPointerInstr>(memOffset - curPartialEvalOffset));
+          newInstrs.push_back(make_unique<ZeroInstr>());
+          newInstrs.push_back(make_unique<SumInstr>(val, 0));
+          curPartialEvalOffset = memOffset;
+        }
+        newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
+
+        instrs.erase(instrs.begin(), instrs.begin() + static_cast<long>(IP));
+        instrs.insert(instrs.begin(), make_move_iterator(newInstrs.begin()), make_move_iterator(newInstrs.end()));
+        IP = instrSize;
         break;
       case JumpIfZero:
+        if(loopDoesntContainRead.find(IP) == loopDoesntContainRead.end()) {
+          if(loopContainsRead(instrs, IP)) {
+            for(const auto [memOffset, val] : valAtOffset) {
+              newInstrs.push_back(make_unique<AddMemPointerInstr>(memOffset - curPartialEvalOffset));
+              newInstrs.push_back(make_unique<ZeroInstr>());
+              newInstrs.push_back(make_unique<SumInstr>(val, 0));
+              curPartialEvalOffset = memOffset;
+            }
+            newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
+
+            instrs.erase(instrs.begin(), instrs.begin() + static_cast<long>(IP));
+            instrs.insert(instrs.begin(), make_move_iterator(newInstrs.begin()), make_move_iterator(newInstrs.end()));
+            IP = instrSize;
+            break;
+          }
+          loopDoesntContainRead.insert(IP);
+        }
+
         if(valAtOffset.find(offset) == valAtOffset.end())
           IP = matchingLoopBracket.at(IP) - 1;
         break;
@@ -819,6 +858,9 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
           IP = matchingLoopBracket.at(IP) - 1;
         break;
       case EndOfFile:
+        instrs.erase(instrs.begin(), instrs.begin() + static_cast<long>(IP));
+        instrs.insert(instrs.begin(), make_move_iterator(newInstrs.begin()), make_move_iterator(newInstrs.end()));
+        IP = instrSize;
         break;
       case Zero:
         valAtOffset.erase(offset);
@@ -862,9 +904,7 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
     }
   }
 
-  newInstrs.push_back(make_unique<EndOfFileInstr>());
-
-  return newInstrs;
+  return std::move(instrs);
 }
 
 
