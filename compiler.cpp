@@ -257,6 +257,10 @@ struct SumInstr : public virtual Instr {
     
     return instrStr("addb\t$"+to_string(amount)+", "+offsetStr+"(%rdi)");
   }
+
+  pair<int64_t, int64_t> amountAndOffset() const {
+    return {amount, offset};
+  }
 private:
   int64_t amount;
   int64_t offset;
@@ -279,6 +283,11 @@ struct MulAddInstr : public virtual Instr {
     assembly += instrStr("addb\t%al, "+offsetStr+"(%rdi)");
     return assembly;
   }
+
+  tuple<int64_t, int64_t, bool> amountOffsetPosInc() const {
+    return {amount, offset, posInc};
+  }
+
 private:
   int64_t amount;
   int64_t offset;
@@ -291,6 +300,10 @@ struct AddMemPointerInstr : public virtual Instr {
 
   string str() const override {    
     return instrStr("add\t$"+to_string(amount)+", %rdi");
+  }
+
+  int64_t getAmount() const {
+    return amount;
   }
 private:
   int64_t amount;
@@ -339,6 +352,9 @@ struct MemScanInstr : public virtual Instr {
     return stride == 1 || stride == 2 || stride == 4 || stride == -1 || stride == -2 || stride == -4;
   }
 
+  int64_t getStride() const {
+    return isNeg ? -absoluteStride : absoluteStride;
+  }
 private:
   int64_t absoluteStride;
   bool isNeg;
@@ -759,7 +775,7 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
   if(!settings.partialEval)
     return std::move(instrs);
 
-  unordered_map<int64_t, int64_t> valAtOffset;
+  unordered_map<int64_t, unsigned char> valAtOffset;
   int64_t offset = 0;
   int64_t curPartialEvalOffset = 0;
   vector<unique_ptr<Instr>> newInstrs;
@@ -777,10 +793,12 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
         --offset;
         break;
       case Inc:
-        ++valAtOffset[offset];
+        if(++valAtOffset[offset] == 0)
+          valAtOffset.erase(offset);
         break;
       case Dec:
-        --valAtOffset[offset];
+        if(--valAtOffset[offset] == 0)
+          valAtOffset.erase(offset);
         break;
       case Write:
         newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
@@ -793,15 +811,51 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
         throw invalid_argument("Don't support reads in partial evaluator");
         break;
       case JumpIfZero:
-        if(valAtOffset[offset] == 0)
+        if(valAtOffset.find(offset) == valAtOffset.end())
           IP = matchingLoopBracket.at(IP) - 1;
         break;
       case JumpUnlessZero:
-        if(valAtOffset[offset] != 0)
+        if(valAtOffset.find(offset) != valAtOffset.end())
           IP = matchingLoopBracket.at(IP) - 1;
         break;
       case EndOfFile:
         break;
+      case Zero:
+        valAtOffset.erase(offset);
+        break;
+      case Sum: {
+        const auto& [amount, furtherOffset] = dynamic_cast<SumInstr*>(instr.get())->amountAndOffset();
+        valAtOffset[offset + furtherOffset] += amount;
+
+        if(valAtOffset[offset + furtherOffset] == 0)
+          valAtOffset.erase(offset + furtherOffset);
+        break;
+      }
+      case MulAdd: {
+        const auto& [amount, furtherOffset, posInc] = dynamic_cast<MulAddInstr*>(instr.get())->amountOffsetPosInc();
+        unsigned char repeatAmount = valAtOffset[offset];
+        if(posInc)
+          repeatAmount = ~repeatAmount + 1;
+
+        unsigned char mulResult = repeatAmount * amount;
+        valAtOffset[offset + furtherOffset] += mulResult;
+
+        if(valAtOffset[offset + furtherOffset] == 0)
+          valAtOffset.erase(offset + furtherOffset);
+        break;
+      }
+      case AddMemPtr: {
+        const auto amount = dynamic_cast<AddMemPointerInstr*>(instr.get())->getAmount();
+
+        offset += amount;
+        break;
+      }
+      case MemScan: {
+        const auto stride = dynamic_cast<MemScanInstr*>(instr.get())->getStride();
+
+        offset += stride;
+        break;
+      }
       default:
         throw invalid_argument("Unsupported op type in partial evaluator: " + to_string(instr->op));
         break;      
@@ -815,9 +869,9 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
 
 
 vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
-  auto partialEvalOps = partialEval(instrs, settings);
-  auto simplifiedLoops = simplifyLoops(partialEvalOps, settings);
-  return instCombine(simplifiedLoops, settings);
+  auto simplifiedLoops = simplifyLoops(instrs, settings);
+  auto instCombinedInstrs = instCombine(simplifiedLoops, settings);
+  return partialEval(instCombinedInstrs, settings);
 }
 
 string compile(const vector<unique_ptr<Instr>>& instrs) {
