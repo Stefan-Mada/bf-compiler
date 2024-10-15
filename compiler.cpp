@@ -15,6 +15,8 @@
 
 using namespace std;
 
+constexpr size_t TAPESIZE = 320'000;
+
 // Handle CLI arguments
 
 // https://blog.vito.nyc/posts/min-guide-to-cli/
@@ -23,6 +25,7 @@ struct MySettings {
   bool simplifySimpleLoops {true};
   bool vectorizeMemScans {true};
   bool runInstCombine {true};
+  bool partialEval {true};
   optional<string> infile;
   optional<string> outfile;
 };
@@ -63,6 +66,8 @@ const unordered_map<string, OneArgHandle> OneArgs {
   S("--vectorize-mem-scans", vectorizeMemScans, stringToBool(arg)),
 
   S("--run-inst-combine", runInstCombine, stringToBool(arg)),
+
+  S("--partial-eval", partialEval, stringToBool(arg)),
 
   S("-o", outfile, arg)
 };
@@ -116,7 +121,6 @@ enum Op {
   JumpUnlessZero,
   EndOfFile,
   Zero,
-  SimpleLoop,
   Sum,
   MulAdd,
   AddMemPtr,
@@ -191,9 +195,20 @@ struct ReadInstr : public virtual Instr {
   }
 };
 
-struct JumpIfZeroInstr : public virtual Instr {
-  JumpIfZeroInstr(const string& ownLabel, const string& targetLabel)
-                : ownLabel(ownLabel), targetLabel(targetLabel) {op = JumpIfZero;}
+struct JumpInstr : public virtual Instr {
+  
+  // returns own label and target label
+  pair<string, string> getLabels() const {
+    return {ownLabel, targetLabel};
+  }
+
+protected:
+  string ownLabel, targetLabel;
+};
+
+struct JumpIfZeroInstr : public virtual JumpInstr {
+  JumpIfZeroInstr(const string& iOwnLabel, const string& iTargetLabel)
+                {op = JumpIfZero; ownLabel = iOwnLabel; targetLabel = iTargetLabel; }
 
   string str() const override {
     string assembly;
@@ -202,14 +217,11 @@ struct JumpIfZeroInstr : public virtual Instr {
     assembly += instrStr("je\t"+targetLabel);
     return assembly;
   }
-
-private:
-  string ownLabel, targetLabel;
 };
 
-struct JumpUnlessZeroInstr : public virtual Instr {
-  JumpUnlessZeroInstr(const string& ownLabel, const string& targetLabel)
-                : ownLabel(ownLabel), targetLabel(targetLabel) {op = JumpUnlessZero;}
+struct JumpUnlessZeroInstr : public virtual JumpInstr {
+  JumpUnlessZeroInstr(const string& iOwnLabel, const string& iTargetLabel)
+                {op = JumpUnlessZero; ownLabel = iOwnLabel; targetLabel = iTargetLabel; }
 
   string str() const override {
     string assembly;
@@ -218,9 +230,6 @@ struct JumpUnlessZeroInstr : public virtual Instr {
     assembly += instrStr("jne\t"+targetLabel);
     return assembly;
   }
-
-private:
-  string ownLabel, targetLabel;
 };
 
 struct EndOfFileInstr : public virtual Instr {
@@ -286,6 +295,7 @@ struct AddMemPointerInstr : public virtual Instr {
 private:
   int64_t amount;
 };
+
 
 struct MemScanInstr : public virtual Instr {
   MemScanInstr(const int64_t stride)
@@ -493,7 +503,6 @@ string intializeVectorMasks() {
 }
 
 string initializeProgram() {
-  constexpr size_t TAPESIZE = 320'000;
   static_assert(TAPESIZE % 2 == 0, "Tapesize must be even to by symmetric");
   // use calloc to initialize all memory to 0
   string vectorMasks = intializeVectorMasks();
@@ -723,8 +732,91 @@ vector<unique_ptr<Instr>> instCombine(vector<unique_ptr<Instr>>& instrs, const M
   return std::move(instrs);
 }
 
+unordered_map<size_t, size_t> initializeLoopBracketIndexes(vector<unique_ptr<Instr>>& instrs) {
+  unordered_map<size_t, size_t> matchingIndex;
+  unordered_map<string, size_t> indexOfLabel;
+
+  for(size_t i = 0; i < instrs.size(); ++i) {
+    const auto& instr = instrs.at(i);
+    if(const JumpInstr *const jump = dynamic_cast<JumpInstr*>(instr.get())) {
+      const auto& [thisLabel, targetLabel] = jump->getLabels();
+
+      if(indexOfLabel.find(targetLabel) == indexOfLabel.end()) {
+        indexOfLabel[thisLabel] = i;
+      }
+      else {
+        const auto indexOfTarget = indexOfLabel[targetLabel];
+        matchingIndex[i] = indexOfTarget;
+        matchingIndex[indexOfTarget] = i;
+      }
+    }
+  }
+
+  return matchingIndex;
+}
+
+vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
+  if(!settings.partialEval)
+    return std::move(instrs);
+
+  unordered_map<int64_t, int64_t> valAtOffset;
+  int64_t offset = 0;
+  int64_t curPartialEvalOffset = 0;
+  vector<unique_ptr<Instr>> newInstrs;
+
+  const unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBracketIndexes(instrs);
+
+  for(size_t IP = 0; IP < instrs.size(); ++IP) {
+    const auto& instr = instrs[IP];
+
+    switch(instr->op) {
+      case MoveRight:
+        ++offset;
+        break;
+      case MoveLeft:
+        --offset;
+        break;
+      case Inc:
+        ++valAtOffset[offset];
+        break;
+      case Dec:
+        --valAtOffset[offset];
+        break;
+      case Write:
+        newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
+        newInstrs.push_back(make_unique<ZeroInstr>());
+        newInstrs.push_back(make_unique<SumInstr>(valAtOffset[offset], 0));
+        newInstrs.push_back(make_unique<WriteInstr>());
+        curPartialEvalOffset = offset;
+        break;
+      case Read:
+        throw invalid_argument("Don't support reads in partial evaluator");
+        break;
+      case JumpIfZero:
+        if(valAtOffset[offset] == 0)
+          IP = matchingLoopBracket.at(IP) - 1;
+        break;
+      case JumpUnlessZero:
+        if(valAtOffset[offset] != 0)
+          IP = matchingLoopBracket.at(IP) - 1;
+        break;
+      case EndOfFile:
+        break;
+      default:
+        throw invalid_argument("Unsupported op type in partial evaluator: " + to_string(instr->op));
+        break;      
+    }
+  }
+
+  newInstrs.push_back(make_unique<EndOfFileInstr>());
+
+  return newInstrs;
+}
+
+
 vector<unique_ptr<Instr>> optimize(vector<unique_ptr<Instr>>& instrs, const MySettings& settings) {
-  auto simplifiedLoops = simplifyLoops(instrs, settings);
+  auto partialEvalOps = partialEval(instrs, settings);
+  auto simplifiedLoops = simplifyLoops(partialEvalOps, settings);
   return instCombine(simplifiedLoops, settings);
 }
 
