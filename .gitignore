@@ -3,3 +3,6 @@
 *.sh
 *.s
 bftest/
+bfcheck/
+scratch/
+scan/

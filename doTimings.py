@@ -5,7 +5,7 @@ import pandas as pd
 import time
 
 onlyfiles = [f for f in listdir("benches") if isfile(join("benches", f))]
-cliOptions = ["", "--vectorize-mem-scans false", "--simplify-loops false", "--vectorize-mem-scans false --simplify-loops false"]
+cliOptions = ["", "--partial-eval false"]
 
 df = pd.DataFrame(data=onlyfiles)
 

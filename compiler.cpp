@@ -772,11 +772,16 @@ unordered_map<size_t, size_t> initializeLoopBracketIndexes(vector<unique_ptr<Ins
 }
 
 bool loopContainsRead(const vector<unique_ptr<Instr>>& instrs, const size_t start) {
+  int lhsSeen = 0;
   for(size_t i = start; i < instrs.size(); ++i) {
     if(instrs.at(i)->op == Read)
       return true;
-    else if(instrs.at(i)->op == JumpUnlessZero)
-      break;
+    else if(instrs.at(i)->op == JumpUnlessZero) {
+      if(--lhsSeen == 0)
+        break;
+    }
+    else if(instrs.at(i)->op == JumpIfZero)
+      ++lhsSeen;
   }
   return false;
 }
@@ -790,6 +795,7 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
   int64_t offset = 0;
   int64_t curPartialEvalOffset = 0;
   vector<unique_ptr<Instr>> newInstrs;
+  unordered_set<int64_t> offsetsThatPrintedNonzero;
 
   const unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBracketIndexes(instrs);
   const size_t instrSize = instrs.size();
@@ -815,6 +821,14 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
         newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
         newInstrs.push_back(make_unique<ZeroInstr>());
         newInstrs.push_back(make_unique<SumInstr>(valAtOffset[offset], 0));
+        if(valAtOffset[offset] == 0) {
+          valAtOffset.erase(offset);
+          if(offsetsThatPrintedNonzero.count(offset))
+            offsetsThatPrintedNonzero.erase(offset);
+        }
+        else
+          offsetsThatPrintedNonzero.insert(offset);
+
         newInstrs.push_back(make_unique<WriteInstr>());
         curPartialEvalOffset = offset;
         break;
@@ -825,6 +839,16 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
           newInstrs.push_back(make_unique<SumInstr>(val, 0));
           curPartialEvalOffset = memOffset;
         }
+
+        for(const int64_t offsetThatMustZero : offsetsThatPrintedNonzero) {
+          if(valAtOffset.find(offsetThatMustZero) != valAtOffset.end())
+            continue;
+          newInstrs.push_back(make_unique<AddMemPointerInstr>(offsetThatMustZero - curPartialEvalOffset));
+          newInstrs.push_back(make_unique<ZeroInstr>());
+          curPartialEvalOffset = offsetThatMustZero;
+        }
+        offsetsThatPrintedNonzero.clear();
+
         newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
 
         instrs.erase(instrs.begin(), instrs.begin() + static_cast<long>(IP));
@@ -840,6 +864,16 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
               newInstrs.push_back(make_unique<SumInstr>(val, 0));
               curPartialEvalOffset = memOffset;
             }
+
+            for(const int64_t offsetThatMustZero : offsetsThatPrintedNonzero) {
+              if(valAtOffset.find(offsetThatMustZero) != valAtOffset.end())
+                continue;
+              newInstrs.push_back(make_unique<AddMemPointerInstr>(offsetThatMustZero - curPartialEvalOffset));
+              newInstrs.push_back(make_unique<ZeroInstr>());
+              curPartialEvalOffset = offsetThatMustZero;
+            }
+            offsetsThatPrintedNonzero.clear();
+
             newInstrs.push_back(make_unique<AddMemPointerInstr>(offset - curPartialEvalOffset));
 
             instrs.erase(instrs.begin(), instrs.begin() + static_cast<long>(IP));
@@ -876,6 +910,9 @@ vector<unique_ptr<Instr>> partialEval(vector<unique_ptr<Instr>>& instrs, const M
       case MulAdd: {
         const auto& [amount, furtherOffset, posInc] = dynamic_cast<MulAddInstr*>(instr.get())->amountOffsetPosInc();
         unsigned char repeatAmount = valAtOffset[offset];
+        if(valAtOffset[offset] == 0)
+          valAtOffset.erase(offset);
+
         if(posInc)
           repeatAmount = ~repeatAmount + 1;
 

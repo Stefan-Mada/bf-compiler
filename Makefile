@@ -8,7 +8,7 @@ default: compiler
 compiler: compiler.cpp
 	$(CC) $(CXX_FLAGS) $(CXX_RELEASE_FLAGS) compiler.cpp -o compiler.out
 
-compiler-debug: interpreter.cpp
+compiler-debug: compiler.cpp
 	$(CC) $(CXX_FLAGS) $(CXX_DEBUG_FLAGS) compiler.cpp -o compiler.out
 
 interpreter: interpreter.cpp
