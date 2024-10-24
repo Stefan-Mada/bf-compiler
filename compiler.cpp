@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cstdlib>
 #include <iostream>
 #include <fstream>
 #include <optional>
@@ -12,6 +13,9 @@
 #include <array>
 #include <memory>
 #include <functional>
+#include <sys/mman.h>
+#include <cstring>
+#include <sstream>
 
 using namespace std;
 
@@ -26,6 +30,7 @@ struct MySettings {
   bool vectorizeMemScans {true};
   bool runInstCombine {true};
   bool partialEval {true};
+  bool justInTime {false};
   optional<string> infile;
   optional<string> outfile;
 };
@@ -69,6 +74,8 @@ const unordered_map<string, OneArgHandle> OneArgs {
 
   S("--partial-eval", partialEval, stringToBool(arg)),
 
+  S("--just-in-time", justInTime, stringToBool(arg)),
+
   S("-o", outfile, arg)
 };
 #undef S
@@ -109,6 +116,18 @@ MySettings parse_settings(int argc, const char* const* const argv) {
 
 // end CLI arguments
 
+string hexToStr(const string& hex) {
+  size_t len = hex.length();
+  std::string newString;
+  for(size_t i=0; i< len; i+=2)
+  {
+      std::string byte = hex.substr(i,2);
+      char chr = static_cast<char>(static_cast<int>(strtol(byte.c_str(), nullptr, 16)));
+      newString.push_back(chr);
+  }
+
+  return newString;
+}
 
 enum Op {
   MoveRight,
@@ -133,6 +152,7 @@ string instrStr(const string& str) {
 
 struct Instr {
   virtual string str() const = 0;
+  virtual string assemble() const = 0;
   virtual ~Instr() {}
   Op op;
 };
@@ -143,6 +163,10 @@ struct MoveRightInstr : public virtual Instr {
   string str() const override {
     return instrStr("inc\t%rdi");
   }
+
+  string assemble() const override {
+    return hexToStr("48ffc7");
+  }
 };
 
 struct MoveLeftInstr : public virtual Instr {
@@ -150,6 +174,10 @@ struct MoveLeftInstr : public virtual Instr {
 
   string str() const override {
     return instrStr("dec\t%rdi");
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 };
 
@@ -159,6 +187,10 @@ struct IncInstr : public virtual Instr {
   string str() const override {
     return instrStr("incb\t(%rdi)");
   }
+
+  string assemble() const override {
+    return hexToStr("fe07");
+  }
 };
 
 struct DecInstr : public virtual Instr {
@@ -166,6 +198,10 @@ struct DecInstr : public virtual Instr {
 
   string str() const override {
     return instrStr("decb\t(%rdi)");
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 };
 
@@ -180,6 +216,37 @@ struct WriteInstr : public virtual Instr {
     assembly += instrStr("pop\t%rdi");
     return assembly;
   }
+
+  string assemble() const override {
+      throw invalid_argument("This instruction can not assemble without parameter");
+    return hexToStr("57408a3fe8000000005f");
+  }
+  string assemble(unsigned char* startAddr) const {
+    cerr << reinterpret_cast<void*>(putchar) << endl;
+    cerr << reinterpret_cast<void*>(startAddr - 1) << endl;
+    unsigned diff = reinterpret_cast<unsigned long>(startAddr + 9) - reinterpret_cast<unsigned long>(putchar);
+    stringstream ss;
+    ss << hex << diff;
+
+    cerr << ss.str() << endl;
+
+
+    string diffStr = ss.str();
+    while(diffStr.size() < 8)
+      diffStr.insert(0, "f");
+
+    cerr << diffStr << endl;
+
+    swap(diffStr[0], diffStr[6]);
+    swap(diffStr[1], diffStr[7]);
+    swap(diffStr[2], diffStr[4]);
+    swap(diffStr[3], diffStr[5]);
+
+
+    cerr << diffStr << endl;
+
+    return hexToStr("57408a3fe8"+diffStr+"5f");
+  }
 };
 
 struct ReadInstr : public virtual Instr {
@@ -192,6 +259,10 @@ struct ReadInstr : public virtual Instr {
     assembly += instrStr("pop\t%rdi");
     assembly += instrStr("movb\t%al, (%rdi)");
     return assembly;
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 };
 
@@ -217,6 +288,10 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
     assembly += instrStr("je\t"+targetLabel);
     return assembly;
   }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
+  }
 };
 
 struct JumpUnlessZeroInstr : public virtual JumpInstr {
@@ -230,6 +305,10 @@ struct JumpUnlessZeroInstr : public virtual JumpInstr {
     assembly += instrStr("jne\t"+targetLabel);
     return assembly;
   }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
+  }
 };
 
 struct EndOfFileInstr : public virtual Instr {
@@ -238,6 +317,10 @@ struct EndOfFileInstr : public virtual Instr {
   string str() const override {
     return instrStr("ret");
   }
+
+  string assemble() const override {
+    return hexToStr("c3");
+  }
 };
 
 struct ZeroInstr : public virtual Instr {
@@ -245,6 +328,10 @@ struct ZeroInstr : public virtual Instr {
 
   string str() const override {
     return instrStr("movb\t$0, (%rdi)");
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 };
 
@@ -256,6 +343,10 @@ struct SumInstr : public virtual Instr {
     const string offsetStr = (offset == 0) ? "" : to_string(offset);
     
     return instrStr("addb\t$"+to_string(amount)+", "+offsetStr+"(%rdi)");
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 
   pair<int64_t, int64_t> amountAndOffset() const {
@@ -284,6 +375,10 @@ struct MulAddInstr : public virtual Instr {
     return assembly;
   }
 
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
+  }
+
   tuple<int64_t, int64_t, bool> amountOffsetPosInc() const {
     return {amount, offset, posInc};
   }
@@ -300,6 +395,10 @@ struct AddMemPointerInstr : public virtual Instr {
 
   string str() const override {    
     return instrStr("add\t$"+to_string(amount)+", %rdi");
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 
   int64_t getAmount() const {
@@ -346,6 +445,10 @@ struct MemScanInstr : public virtual Instr {
       assembly += instrStr("add\t%r10, %rdi");
     }
     return assembly;
+  }
+
+  string assemble() const override {
+    throw invalid_argument("This instruction can not assemble currently");
   }
 
   static constexpr bool validStride(const int64_t stride) {
@@ -976,6 +1079,51 @@ bool checkValidInstrs(const vector<Op>& ops) {
   return true;
 }
 
+void executeJIT(const vector<unique_ptr<Instr>>& instrs) {
+  constexpr size_t memorySize = 2<<14;
+  auto* execMemVoidPtr = mmap(nullptr, memorySize, 
+                          PROT_READ | PROT_WRITE | PROT_EXEC,
+                          MAP_ANON | MAP_PRIVATE, 
+                          -1, 0);
+
+  auto *execMemPtr = static_cast<unsigned char*>(execMemVoidPtr);
+
+  size_t instrOffset = 0;
+
+  string totalObjCode;
+
+
+  for(const auto& instr : instrs) {
+    switch(instr->op) {
+      case Write: {
+        const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
+        const string objcode = writeInstr->assemble(execMemPtr + instrOffset);
+        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
+        instrOffset += objcode.size();
+        totalObjCode.append(objcode);
+        break;
+      }
+      default: {
+        const string objcode = instr->assemble();
+        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
+        instrOffset += objcode.size();
+        totalObjCode.append(objcode);
+        break;
+      }
+    }
+  }
+
+  cout << totalObjCode;
+  cout << flush;
+
+  // jump to memory
+  typedef void (*fptr)();
+  fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr)) ;
+  my_fptr();
+
+  return;
+}
+
 int main(int argc, char** argv) {
   MySettings settings = parse_settings(argc, argv);
 
@@ -1007,6 +1155,10 @@ int main(int argc, char** argv) {
 
   instrs = optimize(instrs, settings);
 
+  if(settings.justInTime) {
+    executeJIT(instrs);
+    return EXIT_SUCCESS;
+  }
   string program = compile(instrs);
 
   if(!settings.outfile)
