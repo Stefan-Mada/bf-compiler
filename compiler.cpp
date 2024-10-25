@@ -1086,7 +1086,64 @@ bool checkValidInstrs(const vector<Op>& ops) {
   return true;
 }
 
-void executeJIT(const vector<unique_ptr<Instr>>& instrs) {
+
+
+struct BasicBlock {
+  BasicBlock(vector<unique_ptr<Instr>>& inputInstrs, size_t startIndex, size_t endIndex) {
+    long startLongCast = static_cast<long>(startIndex);
+    long endLongCast = static_cast<long>(endIndex);
+
+    instrs.insert(instrs.begin(), make_move_iterator(inputInstrs.begin() + startLongCast), make_move_iterator(inputInstrs.begin() + endLongCast));
+  }
+/**
+ * @brief Generates the encoded instructions in memory starting at blockStartMemory, 
+ *        and returns a pointer to the next valid position to insert memory.
+ * 
+ * @param blockStartMemory 
+ * @return unsigned* 
+ */
+unsigned char* generateBasicBlockInstrs(unsigned char* const blockStartMemory) {
+  unsigned char* currMemPos = blockStartMemory;
+
+  for(size_t i = 0; i < instrs.size(); ++i) {
+    const auto& instr = instrs[i];
+
+    switch(instr->op) {
+      case Write: {
+        const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
+        const string objcode = writeInstr->assemble(currMemPos);
+        memcpy(currMemPos, objcode.c_str(), objcode.size());
+        instrToMemAddr.push_back(currMemPos);
+        currMemPos += objcode.size();
+        break;
+      }
+      case Read: {
+        const ReadInstr *const readInstr = dynamic_cast<ReadInstr*>(instr.get());
+        const string objcode = readInstr->assemble(currMemPos);
+        memcpy(currMemPos, objcode.c_str(), objcode.size());
+        instrToMemAddr.push_back(currMemPos);
+        currMemPos += objcode.size();
+        break;
+      }
+      default: {
+        const string objcode = instr->assemble();
+        memcpy(currMemPos, objcode.c_str(), objcode.size());
+        instrToMemAddr.push_back(currMemPos);
+        currMemPos += objcode.size();
+        break;
+      }
+    }
+  }
+
+  return currMemPos;
+}
+
+private:
+  vector<unique_ptr<Instr>> instrs;
+  vector<unsigned char*> instrToMemAddr;
+};
+
+void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   constexpr size_t memorySize = 2<<14;
   auto* execMemVoidPtr = mmap(nullptr, memorySize, 
                           PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -1094,52 +1151,35 @@ void executeJIT(const vector<unique_ptr<Instr>>& instrs) {
                           -1, 0);
 
   auto *execMemPtr = static_cast<unsigned char*>(execMemVoidPtr);
-
-  size_t instrOffset = 0;
-
-  string totalObjCode;
-
-
-  for(const auto& instr : instrs) {
-    switch(instr->op) {
-      case Write: {
-        const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
-        const string objcode = writeInstr->assemble(execMemPtr + instrOffset);
-        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
-        instrOffset += objcode.size();
-        totalObjCode.append(objcode);
-        break;
-      }
-      case Read: {
-        const ReadInstr *const readInstr = dynamic_cast<ReadInstr*>(instr.get());
-        const string objcode = readInstr->assemble(execMemPtr + instrOffset);
-        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
-        instrOffset += objcode.size();
-        totalObjCode.append(objcode);
-        break;
-      }
-      default: {
-        const string objcode = instr->assemble();
-        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
-        instrOffset += objcode.size();
-        totalObjCode.append(objcode);
-        break;
-      }
-    }
-  }
-
-  // cout << totalObjCode;
-  // cout << flush;
+  vector<BasicBlock> basicBlocks;
 
   // create tape
   unsigned char* tapePtr = static_cast<unsigned char*>(calloc(TAPESIZE, 1));
   tapePtr += TAPESIZE / 2;
 
-
-  // jump to memory
+  // create function call to get to executable code
   typedef void (*fptr)(unsigned char*);
   fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr)) ;
-  my_fptr(tapePtr);
+
+  for(size_t lhs = 0, rhs = 0; rhs < instrs.size(); ++rhs) {
+    const auto& instr = instrs[rhs];
+
+    if(instr->op == JumpIfZero || instr->op == JumpUnlessZero || instr->op == EndOfFile) {
+      basicBlocks.emplace_back(instrs, lhs, rhs + 1);
+      execMemPtr = basicBlocks.back().generateBasicBlockInstrs(execMemPtr);
+
+      // jump to memory
+      my_fptr(tapePtr);
+    }
+  }
+
+
+
+  // cout << totalObjCode;
+  // cout << flush;
+
+
+
 
   return;
 }
