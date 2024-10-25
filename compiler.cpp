@@ -263,6 +263,14 @@ struct ReadInstr : public virtual Instr {
   string assemble() const override {
     throw invalid_argument("This instruction can not assemble currently");
   }
+
+  string assemble(unsigned char* startAddr) const {
+    intptr_t funcPtr = reinterpret_cast<intptr_t>(getchar);
+    intptr_t nextInstrAddr = reinterpret_cast<intptr_t>(startAddr) + 6;
+    string ptrRelOffset = getPtrRelOffset(funcPtr, nextInstrAddr);
+
+    return hexToStr("57e8"+ptrRelOffset+"5f8807");
+  }
 };
 
 struct JumpInstr : public virtual Instr {
@@ -1097,6 +1105,14 @@ void executeJIT(const vector<unique_ptr<Instr>>& instrs) {
       case Write: {
         const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
         const string objcode = writeInstr->assemble(execMemPtr + instrOffset);
+        memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
+        instrOffset += objcode.size();
+        totalObjCode.append(objcode);
+        break;
+      }
+      case Read: {
+        const ReadInstr *const readInstr = dynamic_cast<ReadInstr*>(instr.get());
+        const string objcode = readInstr->assemble(execMemPtr + instrOffset);
         memcpy(execMemPtr+instrOffset, objcode.c_str(), objcode.size());
         instrOffset += objcode.size();
         totalObjCode.append(objcode);
