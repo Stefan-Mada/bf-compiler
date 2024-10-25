@@ -224,7 +224,7 @@ struct WriteInstr : public virtual Instr {
   string assemble(unsigned char* startAddr) const {
     cerr << reinterpret_cast<void*>(putchar) << endl;
     cerr << reinterpret_cast<void*>(startAddr - 1) << endl;
-    unsigned diff = reinterpret_cast<unsigned long>(startAddr + 9) - reinterpret_cast<unsigned long>(putchar);
+    unsigned diff = reinterpret_cast<unsigned long>(putchar) - reinterpret_cast<unsigned long>(startAddr + 9);
     stringstream ss;
     ss << hex << diff;
 
