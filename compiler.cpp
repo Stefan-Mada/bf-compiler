@@ -177,7 +177,7 @@ struct MoveLeftInstr : public virtual Instr {
   }
 
   string assemble() const override {
-    throw invalid_argument("This instruction can not assemble currently");
+    return hexToStr("48ffcf");
   }
 };
 
@@ -201,7 +201,7 @@ struct DecInstr : public virtual Instr {
   }
 
   string assemble() const override {
-    throw invalid_argument("This instruction can not assemble currently");
+    return hexToStr("fe0f");
   }
 };
 
