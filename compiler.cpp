@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -205,6 +206,23 @@ struct DecInstr : public virtual Instr {
   }
 };
 
+string getPtrRelOffset(intptr_t ptr1, intptr_t ptr2) {
+  intptr_t diff = ptr1 - ptr2;
+  stringstream ss;
+  ss << hex << diff;
+
+  string diffStr = ss.str();
+  if(diffStr.size() > 8)
+    diffStr = diffStr.substr(diffStr.size() - 8, 8);
+
+  swap(diffStr[0], diffStr[6]);
+  swap(diffStr[1], diffStr[7]);
+  swap(diffStr[2], diffStr[4]);
+  swap(diffStr[3], diffStr[5]);
+
+  return diffStr;
+}
+
 struct WriteInstr : public virtual Instr {
   WriteInstr() {op = Write;}
 
@@ -222,30 +240,11 @@ struct WriteInstr : public virtual Instr {
     return hexToStr("57408a3fe8000000005f");
   }
   string assemble(unsigned char* startAddr) const {
-    cerr << reinterpret_cast<void*>(putchar) << endl;
-    cerr << reinterpret_cast<void*>(startAddr - 1) << endl;
-    unsigned diff = reinterpret_cast<unsigned long>(putchar) - reinterpret_cast<unsigned long>(startAddr + 9);
-    stringstream ss;
-    ss << hex << diff;
+    intptr_t funcPtr = reinterpret_cast<intptr_t>(putchar);
+    intptr_t nextInstrAddr = reinterpret_cast<intptr_t>(startAddr) + 9;
+    string ptrRelOffset = getPtrRelOffset(funcPtr, nextInstrAddr);
 
-    cerr << ss.str() << endl;
-
-
-    string diffStr = ss.str();
-    while(diffStr.size() < 8)
-      diffStr.insert(0, "f");
-
-    cerr << diffStr << endl;
-
-    swap(diffStr[0], diffStr[6]);
-    swap(diffStr[1], diffStr[7]);
-    swap(diffStr[2], diffStr[4]);
-    swap(diffStr[3], diffStr[5]);
-
-
-    cerr << diffStr << endl;
-
-    return hexToStr("57408a3fe8"+diffStr+"5f");
+    return hexToStr("57408a3fe8"+ptrRelOffset+"5f");
   }
 };
 
