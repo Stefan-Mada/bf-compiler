@@ -1113,13 +1113,18 @@ void executeJIT(const vector<unique_ptr<Instr>>& instrs) {
     }
   }
 
-  cout << totalObjCode;
-  cout << flush;
+  // cout << totalObjCode;
+  // cout << flush;
+
+  // create tape
+  unsigned char* tapePtr = static_cast<unsigned char*>(calloc(TAPESIZE, 1));
+  tapePtr += TAPESIZE / 2;
+
 
   // jump to memory
-  typedef void (*fptr)();
+  typedef void (*fptr)(unsigned char*);
   fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr)) ;
-  my_fptr();
+  my_fptr(tapePtr);
 
   return;
 }
