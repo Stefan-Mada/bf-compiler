@@ -1472,12 +1472,13 @@ int main(int argc, char** argv) {
 
   vector<unique_ptr<Instr>> instrs = parse(ops);
 
-  instrs = optimize(instrs, settings);
-
   if(settings.justInTime) {
     executeJIT(instrs);
     return EXIT_SUCCESS;
   }
+
+  instrs = optimize(instrs, settings);
+
   string program = compile(instrs);
 
   if(!settings.outfile)
