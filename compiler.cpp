@@ -1322,7 +1322,12 @@ private:
 };
 
 void executeJIT(vector<unique_ptr<Instr>>& instrs) {
-  constexpr size_t memorySize = 2<<14;
+  // give enough space for 32 * instrs bytes, should
+  // be able to hold an arbitrary amount of instructions
+  unsigned int power = 1;
+  while(power < 32 * instrs.size())
+      power <<= 1;
+  const size_t memorySize = power;
   auto* execMemVoidPtr = mmap(nullptr, memorySize, 
                           PROT_READ | PROT_WRITE | PROT_EXEC,
                           MAP_ANON | MAP_PRIVATE, 
