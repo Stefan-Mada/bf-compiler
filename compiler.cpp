@@ -246,7 +246,8 @@ struct WriteInstr : public virtual Instr {
     intptr_t nextInstrAddr = reinterpret_cast<intptr_t>(startAddr) + 9;
     string ptrRelOffset = getPtrRelOffset(funcPtr, nextInstrAddr);
 
-    return hexToStr("57408a3fe8"+ptrRelOffset+"5f");
+    // in addition to above assembly, must also push rsi and pop it
+    return hexToStr("5756408a3fe8"+ptrRelOffset+"5e5f");
   }
 };
 
@@ -271,7 +272,8 @@ struct ReadInstr : public virtual Instr {
     intptr_t nextInstrAddr = reinterpret_cast<intptr_t>(startAddr) + 6;
     string ptrRelOffset = getPtrRelOffset(funcPtr, nextInstrAddr);
 
-    return hexToStr("57e8"+ptrRelOffset+"5f8807");
+    // in addition to above assembly, must also push rsi and pop it
+    return hexToStr("5756e8"+ptrRelOffset+"5e5f8807");
   }
 };
 
@@ -1326,7 +1328,7 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
         auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
         basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
       }
-      
+
       unsigned lastBBIndex;
 
       // create the function pointer to the executable memory we want to go to
