@@ -445,8 +445,20 @@ struct EndOfFileInstr : public virtual Instr {
   }
 
   string assemble() const override {
-    return hexToStr("c3");
+    long bbIndexLong = static_cast<long>(bbNum);
+    string indexToLittleEndianHex = getPtrRelOffset(reinterpret_cast<intptr_t>(bbIndexLong), 0);
+    // mov DWORD PTR [rsi], bbIndex     ; Moves 4 bytes (32 bits) to the address in rsi
+    const string getBBNumObjCode = "c706" + indexToLittleEndianHex;
+
+    return hexToStr(getBBNumObjCode + "c3");
   }
+
+  void setBBNum(size_t num) {
+    bbNum = num;
+  }
+
+private:
+  size_t bbNum;
 };
 
 struct ZeroInstr : public virtual Instr {
@@ -1208,7 +1220,8 @@ bool checkValidInstrs(const vector<Op>& ops) {
 
 
 struct BasicBlock {
-  BasicBlock(vector<unique_ptr<Instr>>& inputInstrs, size_t startIndex, size_t endIndex, size_t bbIndex) : bbIndex(bbIndex) {
+  BasicBlock(vector<unique_ptr<Instr>>& inputInstrs, size_t startIndex, size_t endIndex, size_t bbIndex) 
+            : bbIndex(bbIndex), startIndex(startIndex), endIndex(endIndex) {
     long startLongCast = static_cast<long>(startIndex);
     long endLongCast = static_cast<long>(endIndex);
 
@@ -1245,10 +1258,16 @@ struct BasicBlock {
           break;
         }
         case JumpIfZero: 
-        case JumpUnlessZero: {
-          JumpInstr* jumpInstr = dynamic_cast<JumpInstr*>(instr.get());
-          jumpInstr->setInstrStartAddr(currMemPos);
-          jumpInstr->setBBNum(bbIndex);
+        case JumpUnlessZero: 
+        case EndOfFile: {
+          if(EndOfFileInstr* eofInstr = dynamic_cast<EndOfFileInstr*>(instr.get())) {
+            eofInstr->setBBNum(bbIndex);
+          }
+          else {
+            JumpInstr* jumpInstr = dynamic_cast<JumpInstr*>(instr.get());
+            jumpInstr->setInstrStartAddr(currMemPos);
+            jumpInstr->setBBNum(bbIndex);
+          }
           // implicit fallthrough
         }
         default: {
@@ -1284,14 +1303,22 @@ struct BasicBlock {
     return instrToMemAddr.back();
   }
 
+  Op getFinalInstrOp() {
+    return instrs.back()->op;
+  }
+
   unsigned char* getFirstInstrMemAddr() {
     return instrToMemAddr.front();
+  }
+
+  size_t getEndIndex() {
+    return endIndex;
   }
 
 private:
   vector<unique_ptr<Instr>> instrs;
   vector<unsigned char*> instrToMemAddr;
-  size_t bbIndex;
+  size_t bbIndex, startIndex, endIndex;
 };
 
 void executeJIT(vector<unique_ptr<Instr>>& instrs) {
@@ -1307,6 +1334,7 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   // map where to jump for [ and ]
   const unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBracketIndexes(instrs);
   unordered_map<size_t, size_t> jzInstrToBB;
+  unordered_map<size_t, size_t> startInstrIndexToBB;
 
 
   // create tape
@@ -1317,29 +1345,32 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   // updates finalBBIndex after every call
   // returns final memory cell pointed to before exiting
   typedef unsigned char* (*fptr)(unsigned char* currTapePtr, unsigned* finalBBIndex);
+  unsigned char* nextExecMemPtr = nullptr;
+  unsigned char* nextFreeMemory = execMemPtr;
 
   for(size_t lhs = 0, rhs = 0; rhs < instrs.size(); ++rhs) {
     const auto& instr = instrs[rhs];
-    const Op op = instr->op;
 
-    if(op == JumpIfZero || op == JumpUnlessZero || op == EndOfFile) {
-      const size_t nextBBIndex = basicBlocks.size();
-      basicBlocks.emplace_back(instrs, lhs, rhs + 1, nextBBIndex);
-      auto* nextExecMemPtr = basicBlocks.back().generateBasicBlockInstrs(execMemPtr);
+    if(!instr || instr->op == JumpIfZero || instr->op == JumpUnlessZero || instr->op == EndOfFile) {
+      // perhaps we ended up somewhere where we already generated this basic block, 
+      // so want to skip this block and just execute some code
+      if(instr) {
+        const Op op = instr->op;
+        const size_t nextBBIndex = basicBlocks.size();
+        basicBlocks.emplace_back(instrs, lhs, rhs + 1, nextBBIndex);
+        startInstrIndexToBB[lhs] = nextBBIndex;
+        nextFreeMemory = basicBlocks.back().generateBasicBlockInstrs(nextFreeMemory);
 
-      if(op == JumpIfZero)
-        jzInstrToBB[rhs] = nextBBIndex;
+        if(op == JumpIfZero)
+          jzInstrToBB[rhs] = nextBBIndex;
 
-      // if jumpUnlessZero, then we already can form the backedge to the jumpifzero instruction
-      if(op == JumpUnlessZero) {
-        auto targetLoopInstrIndex = matchingLoopBracket.at(rhs);
-        auto targetBBIndex = jzInstrToBB[targetLoopInstrIndex];
-        auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
-        basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
-
-        // now set the ['s jump target on zero to this basic block
-        targetJumpAddr = basicBlocks.back().getFinalInstrMemAddr();
-        basicBlocks[targetBBIndex].setTailOnZeroMemAddr(targetJumpAddr);
+        // if jumpUnlessZero, then we already can form the backedge to the jumpifzero instruction
+        if(op == JumpUnlessZero) {
+          auto targetLoopInstrIndex = matchingLoopBracket.at(rhs);
+          auto targetBBIndex = jzInstrToBB[targetLoopInstrIndex];
+          auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
+          basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
+        }
       }
 
       unsigned lastBBIndex;
@@ -1354,27 +1385,52 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
       currTapePtr = my_fptr(currTapePtr, &lastBBIndex);
 
       BasicBlock& lastBB = basicBlocks[lastBBIndex];
+      const Op finalInstrOp = lastBB.getFinalInstrOp();
+      const size_t brachInstIndex = lastBB.getEndIndex() - 1;
 
-      if(op == JumpIfZero) {
+      // see the next place to point to by default to new, free memory
+      nextExecMemPtr = nextFreeMemory;
+
+
+      if(finalInstrOp == JumpIfZero) {
         if(*currTapePtr == 0) {
+          const size_t firstInstrIndex = matchingLoopBracket.at(brachInstIndex) + 1;
+          if(startInstrIndexToBB.find(firstInstrIndex) != startInstrIndexToBB.end()) {
+            size_t existinBBIndex = startInstrIndexToBB[firstInstrIndex];
+            nextExecMemPtr = basicBlocks.at(existinBBIndex).getFirstInstrMemAddr();
+          }
+
           lastBB.setTailOnZeroMemAddr(nextExecMemPtr);
-          rhs = matchingLoopBracket.at(rhs);
-          lhs = rhs + 1;
+          rhs = firstInstrIndex - 1;
+          lhs = firstInstrIndex;
         }
         else {
+          if(startInstrIndexToBB.find(brachInstIndex + 1) != startInstrIndexToBB.end()) {
+            size_t existinBBIndex = startInstrIndexToBB[brachInstIndex + 1];
+            nextExecMemPtr = basicBlocks.at(existinBBIndex).getFirstInstrMemAddr();
+          }
+          
           lastBB.setTailOnNotZeroMemAddr(nextExecMemPtr);
+          rhs = brachInstIndex;
           lhs = rhs + 1;
         }
       }
-      else if(op == JumpUnlessZero) {
+      else if(finalInstrOp == JumpUnlessZero) {
+        if(startInstrIndexToBB.find(brachInstIndex + 1) != startInstrIndexToBB.end()) {
+          size_t existinBBIndex = startInstrIndexToBB[brachInstIndex + 1];
+          nextExecMemPtr = basicBlocks.at(existinBBIndex).getFirstInstrMemAddr();
+        }
         lastBB.setTailOnZeroMemAddr(nextExecMemPtr);
+        rhs = brachInstIndex;
         lhs = rhs + 1;
       }
       execMemPtr = nextExecMemPtr;
     }
   }
 
-
+  // for(intptr_t i = reinterpret_cast<intptr_t>(execMemVoidPtr); i < reinterpret_cast<intptr_t>(execMemVoidPtr) + 256; ++i)
+  //   cerr << *reinterpret_cast<unsigned char *>(i);
+  // cerr << flush;
 
   // cout << totalObjCode;
   // cout << flush;
