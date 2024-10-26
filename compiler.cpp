@@ -296,11 +296,16 @@ struct JumpInstr : public virtual Instr {
     instrStartAddr = ptr;
   }
 
+  void setBBNum(size_t num) {
+    bbNum = num;
+  }
+
 protected:
   string ownLabel, targetLabel;
   unsigned char* jumpOnZeroTarget = nullptr;
   unsigned char* jumpNotZeroTarget = nullptr;
   unsigned char* instrStartAddr = nullptr;
+  size_t bbNum;
 };
 
 struct JumpIfZeroInstr : public virtual JumpInstr {
@@ -317,18 +322,24 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
 
   // returns with 13 no-ops (what will be filled in later)
   string assemble() const override {
+    long bbIndexLong = static_cast<long>(bbNum);
+    string indexToLittleEndianHex = getPtrRelOffset(reinterpret_cast<intptr_t>(bbIndexLong), 0);
+    // mov DWORD PTR [rsi], bbIndex     ; Moves 4 bytes (32 bits) to the address in rsi
+    const string getBBNumObjCode = "c706" + indexToLittleEndianHex;
+
+
     if(!jumpOnZeroTarget && !jumpNotZeroTarget) {
       string noOpStr;
-      for(size_t i = 0; i < 17; ++i)
+      for(size_t i = 0; i < 24; ++i)
         noOpStr += "90";
 
       // intel syntax:
       // mov    rax,rdi
       // ret
-      return hexToStr("4889f8c3"+noOpStr);  
+      return hexToStr(getBBNumObjCode+"4889f8c3"+noOpStr);  
     }
     else if(jumpOnZeroTarget && !jumpNotZeroTarget) {
-      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 18;
       intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
       string ptrRelOffset = getPtrRelOffset(jzTarget, instrAfterJumpPtr);
 
@@ -336,10 +347,10 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
       // cmp    BYTE PTR [rdi],0x0
       // je     ptrRelOffset
       // ret
-      return hexToStr("4889f8803f000f84"+ptrRelOffset+"c3");  
+      return hexToStr(getBBNumObjCode+"4889f8803f000f84"+ptrRelOffset+"c3");  
     }
     else if(!jumpOnZeroTarget && jumpNotZeroTarget) {
-      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 18;
       intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
       string ptrRelOffset = getPtrRelOffset(jnzTarget, instrAfterJumpPtr);
 
@@ -347,11 +358,11 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
       // cmp    BYTE PTR [rdi],0x0
       // jne    ptrRelOffset
       // ret
-      return hexToStr("4889f8803f000f85"+ptrRelOffset+"c3");  
+      return hexToStr(getBBNumObjCode+"4889f8803f000f85"+ptrRelOffset+"c3");  
     }
     else { // both 
-      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
-      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
+      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 18;
+      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 23;
       intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
       intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
       string jzTargetRelOffset = getPtrRelOffset(jzTarget, instrAfterJzJumpPtr);
@@ -361,7 +372,7 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
       // cmp    BYTE PTR [rdi],0x0
       // je     jzTargetRelOffset
       // jmp    jnzTargetRelOffset
-      return hexToStr("4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
+      return hexToStr(getBBNumObjCode+"4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
     }
   }
 };
@@ -380,21 +391,26 @@ struct JumpUnlessZeroInstr : public virtual JumpInstr {
 
   // returns with 13 no-ops (what will be filled in later)
   string assemble() const override {
+    long bbIndexLong = static_cast<long>(bbNum);
+    string indexToLittleEndianHex = getPtrRelOffset(reinterpret_cast<intptr_t>(bbIndexLong), 0);
+    // mov DWORD PTR [rsi], bbIndex     ; Moves 4 bytes (32 bits) to the address in rsi
+    const string getBBNumObjCode = "c706" + indexToLittleEndianHex;
+
     if(!jumpOnZeroTarget && !jumpNotZeroTarget) {
       string noOpStr;
-      for(size_t i = 0; i < 17; ++i)
+      for(size_t i = 0; i < 24; ++i)
         noOpStr += "90";
       
       // intel syntax:
       // mov    rax,rdi
       // ret
-      return hexToStr("4889f8c3"+noOpStr);  
+      return hexToStr(getBBNumObjCode+"4889f8c3"+noOpStr);  
     }
     else if(jumpOnZeroTarget && !jumpNotZeroTarget) {
       throw std::invalid_argument("This should not be possible");
     }
     else if(!jumpOnZeroTarget && jumpNotZeroTarget) {
-      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 18;
       intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
       string ptrRelOffset = getPtrRelOffset(jnzTarget, instrAfterJumpPtr);
 
@@ -402,11 +418,11 @@ struct JumpUnlessZeroInstr : public virtual JumpInstr {
       // cmp    BYTE PTR [rdi],0x0
       // jne    ptrRelOffset
       // ret
-      return hexToStr("4889f8803f000f85"+ptrRelOffset+"c3");  
+      return hexToStr(getBBNumObjCode+"4889f8803f000f85"+ptrRelOffset+"c3");  
     }
     else { // both 
-      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
-      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
+      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 18;
+      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 23;
       intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
       intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
       string jzTargetRelOffset = getPtrRelOffset(jzTarget, instrAfterJzJumpPtr);
@@ -416,7 +432,7 @@ struct JumpUnlessZeroInstr : public virtual JumpInstr {
       // cmp    BYTE PTR [rdi],0x0
       // je     jzTargetRelOffset
       // jmp    jnzTargetRelOffset
-      return hexToStr("4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
+      return hexToStr(getBBNumObjCode+"4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
     }
   }
 };
@@ -1206,7 +1222,7 @@ struct BasicBlock {
   * @return unsigned* 
   */
   unsigned char* generateBasicBlockInstrs(unsigned char* const blockStartMemory) {
-    unsigned char* currMemPos = markBasicBlockStartAddr(blockStartMemory);
+    unsigned char* currMemPos = blockStartMemory;
 
     for(size_t i = 0; i < instrs.size(); ++i) {
       const auto& instr = instrs[i];
@@ -1232,6 +1248,7 @@ struct BasicBlock {
         case JumpUnlessZero: {
           JumpInstr* jumpInstr = dynamic_cast<JumpInstr*>(instr.get());
           jumpInstr->setInstrStartAddr(currMemPos);
+          jumpInstr->setBBNum(bbIndex);
           // implicit fallthrough
         }
         default: {
@@ -1272,18 +1289,6 @@ struct BasicBlock {
   }
 
 private:
-  unsigned char* markBasicBlockStartAddr(unsigned char* const blockStartMemory) {
-    unsigned char* currMemPos = blockStartMemory;
-    long bbIndexLong = static_cast<long>(bbIndex);
-    string indexToLittleEndianHex = getPtrRelOffset(reinterpret_cast<intptr_t>(bbIndexLong), 0);
-    // mov DWORD PTR [rsi], bbIndex     ; Moves 4 bytes (32 bits) to the address in rsi
-    const string objcode = hexToStr("c706" + indexToLittleEndianHex);
-    memcpy(currMemPos, objcode.c_str(), objcode.size());
-    instrToMemAddr.push_back(currMemPos);
-    currMemPos += objcode.size();
-
-    return currMemPos;
-  }
   vector<unique_ptr<Instr>> instrs;
   vector<unsigned char*> instrToMemAddr;
   size_t bbIndex;
@@ -1339,6 +1344,10 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
 
       unsigned lastBBIndex;
 
+      // for(intptr_t i = reinterpret_cast<intptr_t>(execMemPtr); i < reinterpret_cast<intptr_t>(nextExecMemPtr); ++i)
+      //   cerr << *reinterpret_cast<unsigned char *>(i);
+      // cerr << flush;
+
       // create the function pointer to the executable memory we want to go to
       fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr));
       // jump to memory
@@ -1369,11 +1378,6 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
 
   // cout << totalObjCode;
   // cout << flush;
-
-  execMemPtr = static_cast<unsigned char*>(execMemVoidPtr);
-  for(size_t i = 0; i < 150; ++i)
-    cerr << execMemPtr[i];
-  cerr << flush;
 
   return;
 }
