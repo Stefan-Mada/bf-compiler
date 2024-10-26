@@ -351,7 +351,7 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
     }
     else { // both 
       intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
-        intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
+      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
       intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
       intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
       string jzTargetRelOffset = getPtrRelOffset(jzTarget, instrAfterJzJumpPtr);
@@ -1267,6 +1267,10 @@ struct BasicBlock {
     return instrToMemAddr.back();
   }
 
+  unsigned char* getFirstInstrMemAddr() {
+    return instrToMemAddr.front();
+  }
+
 private:
   unsigned char* markBasicBlockStartAddr(unsigned char* const blockStartMemory) {
     unsigned char* currMemPos = blockStartMemory;
@@ -1327,6 +1331,10 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
         auto targetBBIndex = jzInstrToBB[targetLoopInstrIndex];
         auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
         basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
+
+        // now set the ['s jump target on zero to this basic block
+        targetJumpAddr = basicBlocks.back().getFinalInstrMemAddr();
+        basicBlocks[targetBBIndex].setTailOnZeroMemAddr(targetJumpAddr);
       }
 
       unsigned lastBBIndex;
@@ -1362,8 +1370,10 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   // cout << totalObjCode;
   // cout << flush;
 
-
-
+  execMemPtr = static_cast<unsigned char*>(execMemVoidPtr);
+  for(size_t i = 0; i < 150; ++i)
+    cerr << execMemPtr[i];
+  cerr << flush;
 
   return;
 }
