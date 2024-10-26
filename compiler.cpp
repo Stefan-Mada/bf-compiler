@@ -212,6 +212,8 @@ string getPtrRelOffset(intptr_t ptr1, intptr_t ptr2) {
   ss << hex << diff;
 
   string diffStr = ss.str();
+  if(diffStr.size() < 8)
+    diffStr = diffStr.insert(0, 8 - diffStr.size(), '0');
   if(diffStr.size() > 8)
     diffStr = diffStr.substr(diffStr.size() - 8, 8);
 
@@ -280,8 +282,23 @@ struct JumpInstr : public virtual Instr {
     return {ownLabel, targetLabel};
   }
 
+  void setZeroTarget(unsigned char* ptr) {
+    jumpOnZeroTarget = ptr;
+  }
+
+  void setNotZeroTarget(unsigned char* ptr) {
+    jumpNotZeroTarget = ptr;
+  }
+
+  void setInstrStartAddr(unsigned char* ptr) {
+    instrStartAddr = ptr;
+  }
+
 protected:
   string ownLabel, targetLabel;
+  unsigned char* jumpOnZeroTarget = nullptr;
+  unsigned char* jumpNotZeroTarget = nullptr;
+  unsigned char* instrStartAddr = nullptr;
 };
 
 struct JumpIfZeroInstr : public virtual JumpInstr {
@@ -296,8 +313,54 @@ struct JumpIfZeroInstr : public virtual JumpInstr {
     return assembly;
   }
 
+  // returns with 13 no-ops (what will be filled in later)
   string assemble() const override {
-    throw invalid_argument("This instruction can not assemble currently");
+    if(!jumpOnZeroTarget && !jumpNotZeroTarget) {
+      string noOpStr;
+      for(size_t i = 0; i < 17; ++i)
+        noOpStr += "90";
+
+      // intel syntax:
+      // mov    rax,rdi
+      // ret
+      return hexToStr("4889f8c3"+noOpStr);  
+    }
+    else if(jumpOnZeroTarget && !jumpNotZeroTarget) {
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
+      string ptrRelOffset = getPtrRelOffset(jzTarget, instrAfterJumpPtr);
+
+      // intel syntax:
+      // cmp    BYTE PTR [rdi],0x0
+      // je     ptrRelOffset
+      // ret
+      return hexToStr("4889f8803f000f84"+ptrRelOffset+"c3");  
+    }
+    else if(!jumpOnZeroTarget && jumpNotZeroTarget) {
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
+      string ptrRelOffset = getPtrRelOffset(jnzTarget, instrAfterJumpPtr);
+
+      // intel syntax:
+      // cmp    BYTE PTR [rdi],0x0
+      // jne    ptrRelOffset
+      // ret
+      return hexToStr("4889f8803f000f85"+ptrRelOffset+"c3");  
+    }
+    else { // both 
+      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+        intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
+      intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
+      intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
+      string jzTargetRelOffset = getPtrRelOffset(jzTarget, instrAfterJzJumpPtr);
+      string jnzTargetRelOffset = getPtrRelOffset(jnzTarget, instrAfterJnzJumpPtr);
+
+      // intel syntax:
+      // cmp    BYTE PTR [rdi],0x0
+      // je     jzTargetRelOffset
+      // jmp    jnzTargetRelOffset
+      return hexToStr("4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
+    }
   }
 };
 
@@ -313,8 +376,46 @@ struct JumpUnlessZeroInstr : public virtual JumpInstr {
     return assembly;
   }
 
+  // returns with 13 no-ops (what will be filled in later)
   string assemble() const override {
-    throw invalid_argument("This instruction can not assemble currently");
+    if(!jumpOnZeroTarget && !jumpNotZeroTarget) {
+      string noOpStr;
+      for(size_t i = 0; i < 17; ++i)
+        noOpStr += "90";
+      
+      // intel syntax:
+      // mov    rax,rdi
+      // ret
+      return hexToStr("4889f8c3"+noOpStr);  
+    }
+    else if(jumpOnZeroTarget && !jumpNotZeroTarget) {
+      throw std::invalid_argument("This should not be possible");
+    }
+    else if(!jumpOnZeroTarget && jumpNotZeroTarget) {
+      intptr_t instrAfterJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
+      string ptrRelOffset = getPtrRelOffset(jnzTarget, instrAfterJumpPtr);
+
+      // intel syntax:
+      // cmp    BYTE PTR [rdi],0x0
+      // jne    ptrRelOffset
+      // ret
+      return hexToStr("4889f8803f000f85"+ptrRelOffset+"c3");  
+    }
+    else { // both 
+      intptr_t instrAfterJzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 12;
+      intptr_t instrAfterJnzJumpPtr = reinterpret_cast<intptr_t>(instrStartAddr) + 17;
+      intptr_t jzTarget = reinterpret_cast<intptr_t>(jumpOnZeroTarget);
+      intptr_t jnzTarget = reinterpret_cast<intptr_t>(jumpNotZeroTarget);
+      string jzTargetRelOffset = getPtrRelOffset(jzTarget, instrAfterJzJumpPtr);
+      string jnzTargetRelOffset = getPtrRelOffset(jnzTarget, instrAfterJnzJumpPtr);
+
+      // intel syntax:
+      // cmp    BYTE PTR [rdi],0x0
+      // je     jzTargetRelOffset
+      // jmp    jnzTargetRelOffset
+      return hexToStr("4889f8803f000f84"+jzTargetRelOffset+"e9"+jnzTargetRelOffset);  
+    }
   }
 };
 
@@ -1089,58 +1190,97 @@ bool checkValidInstrs(const vector<Op>& ops) {
 
 
 struct BasicBlock {
-  BasicBlock(vector<unique_ptr<Instr>>& inputInstrs, size_t startIndex, size_t endIndex) {
+  BasicBlock(vector<unique_ptr<Instr>>& inputInstrs, size_t startIndex, size_t endIndex, size_t bbIndex) : bbIndex(bbIndex) {
     long startLongCast = static_cast<long>(startIndex);
     long endLongCast = static_cast<long>(endIndex);
 
     instrs.insert(instrs.begin(), make_move_iterator(inputInstrs.begin() + startLongCast), make_move_iterator(inputInstrs.begin() + endLongCast));
   }
-/**
- * @brief Generates the encoded instructions in memory starting at blockStartMemory, 
- *        and returns a pointer to the next valid position to insert memory.
- * 
- * @param blockStartMemory 
- * @return unsigned* 
- */
-unsigned char* generateBasicBlockInstrs(unsigned char* const blockStartMemory) {
-  unsigned char* currMemPos = blockStartMemory;
+  /**
+  * @brief Generates the encoded instructions in memory starting at blockStartMemory, 
+  *        and returns a pointer to the next valid position to insert memory.
+  * 
+  * @param blockStartMemory 
+  * @return unsigned* 
+  */
+  unsigned char* generateBasicBlockInstrs(unsigned char* const blockStartMemory) {
+    unsigned char* currMemPos = markBasicBlockStartAddr(blockStartMemory);
 
-  for(size_t i = 0; i < instrs.size(); ++i) {
-    const auto& instr = instrs[i];
+    for(size_t i = 0; i < instrs.size(); ++i) {
+      const auto& instr = instrs[i];
 
-    switch(instr->op) {
-      case Write: {
-        const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
-        const string objcode = writeInstr->assemble(currMemPos);
-        memcpy(currMemPos, objcode.c_str(), objcode.size());
-        instrToMemAddr.push_back(currMemPos);
-        currMemPos += objcode.size();
-        break;
-      }
-      case Read: {
-        const ReadInstr *const readInstr = dynamic_cast<ReadInstr*>(instr.get());
-        const string objcode = readInstr->assemble(currMemPos);
-        memcpy(currMemPos, objcode.c_str(), objcode.size());
-        instrToMemAddr.push_back(currMemPos);
-        currMemPos += objcode.size();
-        break;
-      }
-      default: {
-        const string objcode = instr->assemble();
-        memcpy(currMemPos, objcode.c_str(), objcode.size());
-        instrToMemAddr.push_back(currMemPos);
-        currMemPos += objcode.size();
-        break;
+      switch(instr->op) {
+        case Write: {
+          const WriteInstr *const writeInstr = dynamic_cast<WriteInstr*>(instr.get());
+          const string objcode = writeInstr->assemble(currMemPos);
+          memcpy(currMemPos, objcode.c_str(), objcode.size());
+          instrToMemAddr.push_back(currMemPos);
+          currMemPos += objcode.size();
+          break;
+        }
+        case Read: {
+          const ReadInstr *const readInstr = dynamic_cast<ReadInstr*>(instr.get());
+          const string objcode = readInstr->assemble(currMemPos);
+          memcpy(currMemPos, objcode.c_str(), objcode.size());
+          instrToMemAddr.push_back(currMemPos);
+          currMemPos += objcode.size();
+          break;
+        }
+        case JumpIfZero: 
+        case JumpUnlessZero: {
+          JumpInstr* jumpInstr = dynamic_cast<JumpInstr*>(instr.get());
+          jumpInstr->setInstrStartAddr(currMemPos);
+          // implicit fallthrough
+        }
+        default: {
+          const string objcode = instr->assemble();
+          memcpy(currMemPos, objcode.c_str(), objcode.size());
+          instrToMemAddr.push_back(currMemPos);
+          currMemPos += objcode.size();
+          break;
+        }
       }
     }
+
+    return currMemPos;
   }
 
-  return currMemPos;
-}
+  void setTailOnZeroMemAddr(unsigned char* const nextMemAddr) {
+    auto jumpInstr = dynamic_cast<JumpInstr*>(instrs.back().get());
+    jumpInstr->setZeroTarget(nextMemAddr);
+
+    const string objcode = jumpInstr->assemble();
+    memcpy(instrToMemAddr.back(), objcode.c_str(), objcode.size());
+  }
+
+  void setTailOnNotZeroMemAddr(unsigned char* const nextMemAddr) {
+    auto jumpInstr = dynamic_cast<JumpInstr*>(instrs.back().get());
+    jumpInstr->setNotZeroTarget(nextMemAddr);
+
+    const string objcode = jumpInstr->assemble();
+    memcpy(instrToMemAddr.back(), objcode.c_str(), objcode.size());
+  }
+
+  unsigned char* getFinalInstrMemAddr() {
+    return instrToMemAddr.back();
+  }
 
 private:
+  unsigned char* markBasicBlockStartAddr(unsigned char* const blockStartMemory) {
+    unsigned char* currMemPos = blockStartMemory;
+    long bbIndexLong = static_cast<long>(bbIndex);
+    string indexToLittleEndianHex = getPtrRelOffset(reinterpret_cast<intptr_t>(bbIndexLong), 0);
+    // mov DWORD PTR [rsi], bbIndex     ; Moves 4 bytes (32 bits) to the address in rsi
+    const string objcode = hexToStr("c706" + indexToLittleEndianHex);
+    memcpy(currMemPos, objcode.c_str(), objcode.size());
+    instrToMemAddr.push_back(currMemPos);
+    currMemPos += objcode.size();
+
+    return currMemPos;
+  }
   vector<unique_ptr<Instr>> instrs;
   vector<unsigned char*> instrToMemAddr;
+  size_t bbIndex;
 };
 
 void executeJIT(vector<unique_ptr<Instr>>& instrs) {
@@ -1153,23 +1293,68 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   auto *execMemPtr = static_cast<unsigned char*>(execMemVoidPtr);
   vector<BasicBlock> basicBlocks;
 
+  // map where to jump for [ and ]
+  const unordered_map<size_t, size_t> matchingLoopBracket = initializeLoopBracketIndexes(instrs);
+  unordered_map<size_t, size_t> jzInstrToBB;
+
+
   // create tape
-  unsigned char* tapePtr = static_cast<unsigned char*>(calloc(TAPESIZE, 1));
-  tapePtr += TAPESIZE / 2;
+  unsigned char *const tapePtr = static_cast<unsigned char*>(calloc(TAPESIZE, 1)) + TAPESIZE / 2;
+  unsigned char* currTapePtr = tapePtr;
 
   // create function call to get to executable code
-  typedef void (*fptr)(unsigned char*);
-  fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr)) ;
+  // updates finalBBIndex after every call
+  // returns final memory cell pointed to before exiting
+  typedef unsigned char* (*fptr)(unsigned char* currTapePtr, unsigned* finalBBIndex);
+  fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr));
 
   for(size_t lhs = 0, rhs = 0; rhs < instrs.size(); ++rhs) {
     const auto& instr = instrs[rhs];
+    const Op op = instr->op;
 
-    if(instr->op == JumpIfZero || instr->op == JumpUnlessZero || instr->op == EndOfFile) {
-      basicBlocks.emplace_back(instrs, lhs, rhs + 1);
-      execMemPtr = basicBlocks.back().generateBasicBlockInstrs(execMemPtr);
+    if(op == JumpIfZero || op == JumpUnlessZero || op == EndOfFile) {
+      const size_t nextBBIndex = basicBlocks.size();
+      basicBlocks.emplace_back(instrs, lhs, rhs + 1, nextBBIndex);
+      auto* nextExecMemPtr = basicBlocks.back().generateBasicBlockInstrs(execMemPtr);
+
+      if(op == JumpIfZero)
+        jzInstrToBB[rhs] = nextBBIndex;
+
+      // if jumpUnlessZero, then we already can form the backedge to the jumpifzero instruction
+      if(op == JumpUnlessZero) {
+        auto targetLoopInstrIndex = matchingLoopBracket.at(rhs);
+        auto targetBBIndex = jzInstrToBB[targetLoopInstrIndex];
+        auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
+        basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
+      }
+
+      for(size_t i = 0; i < 100; ++i)
+        cout << execMemPtr[i];
+      cout << flush;
+
+      unsigned lastBBIndex;
 
       // jump to memory
-      my_fptr(tapePtr);
+      currTapePtr = my_fptr(currTapePtr, &lastBBIndex);
+
+      BasicBlock& lastBB = basicBlocks[lastBBIndex];
+
+      if(op == JumpIfZero) {
+        if(*currTapePtr == 0) {
+          lastBB.setTailOnZeroMemAddr(nextExecMemPtr);
+          rhs = matchingLoopBracket.at(rhs);
+          lhs = rhs + 1;
+        }
+        else {
+          lastBB.setTailOnNotZeroMemAddr(nextExecMemPtr);
+          lhs = rhs + 1;
+        }
+      }
+      else if(op == JumpUnlessZero) {
+        lastBB.setTailOnZeroMemAddr(nextExecMemPtr);
+        lhs = rhs + 1;
+      }
+      execMemPtr = nextExecMemPtr;
     }
   }
 
