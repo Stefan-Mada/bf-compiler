@@ -1306,7 +1306,6 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   // updates finalBBIndex after every call
   // returns final memory cell pointed to before exiting
   typedef unsigned char* (*fptr)(unsigned char* currTapePtr, unsigned* finalBBIndex);
-  fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr));
 
   for(size_t lhs = 0, rhs = 0; rhs < instrs.size(); ++rhs) {
     const auto& instr = instrs[rhs];
@@ -1327,13 +1326,11 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
         auto targetJumpAddr = basicBlocks[targetBBIndex].getFinalInstrMemAddr();
         basicBlocks.back().setTailOnNotZeroMemAddr(targetJumpAddr);
       }
-
-      for(size_t i = 0; i < 100; ++i)
-        cout << execMemPtr[i];
-      cout << flush;
-
+      
       unsigned lastBBIndex;
 
+      // create the function pointer to the executable memory we want to go to
+      fptr my_fptr = reinterpret_cast<fptr>(reinterpret_cast<long>(execMemPtr));
       // jump to memory
       currTapePtr = my_fptr(currTapePtr, &lastBBIndex);
 
