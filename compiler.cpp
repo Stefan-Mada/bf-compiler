@@ -1521,6 +1521,16 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   Value* lastTapePos = midpointPtr;
   for(const auto& instr : instrs) {
     switch(instr->op) {
+      case MoveRight: {
+        Value *increment = Builder->getInt32(1);
+        lastTapePos = Builder->CreateGEP(i8Type, lastTapePos, increment);
+        break;
+      }
+      case MoveLeft: {
+        Value *decrement = Builder->getInt32(-1);
+        lastTapePos = Builder->CreateGEP(i8Type, lastTapePos, decrement);
+        break;
+      }
       case Inc: {
         Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
         Value *increment = Builder->getInt8(1);
@@ -1528,10 +1538,22 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
         Builder->CreateStore(newValue, lastTapePos);
         break;
       }
+      case Dec: {
+        Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        Value *decrement = Builder->getInt8(1);
+        Value *newValue = Builder->CreateSub(currentTapeVal, decrement);
+        Builder->CreateStore(newValue, lastTapePos);
+        break;
+      }
       case Write: {
         Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
         Value *extendedVal = Builder->CreateZExt(currentTapeVal, Builder->getInt32Ty());
         Builder->CreateCall(putcharFunc, {extendedVal});
+        break;
+      }
+      case Read: {
+        Value* retVal = Builder->CreateCall(getcharFunc);
+        Builder->CreateStore(retVal, lastTapePos);
         break;
       }
       case EndOfFile: {
