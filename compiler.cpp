@@ -37,7 +37,7 @@ constexpr size_t TAPESIZE = 320'000;
 struct MySettings {
   bool help{false};
   bool simplifySimpleLoops {false};
-  bool vectorizeMemScans {true};
+  bool vectorizeMemScans {false};
   bool runInstCombine {false};
   bool partialEval {false};
   bool justInTime {false};
@@ -1578,6 +1578,13 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
 
         // continue
         Builder->SetInsertPoint(blocks[++bbIndex]);
+
+        // the next block also needs a phi node, but unfortunately we can't complete it now
+        PHINode* phi = Builder->CreatePHI(lastTapePos->getType(), 2);
+
+        phi->addIncoming(lastTapePos, blocks[bbIndex - 1]);
+        // must later add one from the backedge block
+        lastTapePos = phi;
         break;
       }
       case JumpUnlessZero: {
@@ -1588,8 +1595,18 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
         const auto& [ownlabel, targetlabel] = jump->getLabels();
 
         Builder->CreateCondBr(isNotZero, labelToBBIndex.at(targetlabel),blocks[bbIndex + 1]);
-        Builder->SetInsertPoint(blocks[++bbIndex]);
 
+        // now must patch up the past block to have its phis all in a row
+        auto targetBB = labelToBBIndex.at(targetlabel);
+        auto& firstInstr = targetBB->front();
+        if (auto *phiNode = dyn_cast<PHINode>(&firstInstr)) {
+          phiNode->addIncoming(lastTapePos, blocks[bbIndex]);
+        }
+        else
+          throw invalid_argument("How did this block not have a phi node at the start?");
+
+        // can move to the next block now
+        Builder->SetInsertPoint(blocks[++bbIndex]);
         // create phi instruction to keep the world from collapsing
         PHINode* phi = Builder->CreatePHI(lastTapePos->getType(), 2);
 
