@@ -17,8 +17,16 @@
 #include <sys/mman.h>
 #include <cstring>
 #include <sstream>
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 
 using namespace std;
+
+static std::unique_ptr<llvm::LLVMContext> TheContext;
+static std::unique_ptr<llvm::Module> TheModule;
+static std::unique_ptr<llvm::IRBuilder<>> Builder;
 
 constexpr size_t TAPESIZE = 320'000;
 
@@ -32,6 +40,7 @@ struct MySettings {
   bool runInstCombine {true};
   bool partialEval {true};
   bool justInTime {false};
+  bool llvm {true};
   optional<string> infile;
   optional<string> outfile;
 };
@@ -76,6 +85,8 @@ const unordered_map<string, OneArgHandle> OneArgs {
   S("--partial-eval", partialEval, stringToBool(arg)),
 
   S("--just-in-time", justInTime, stringToBool(arg)),
+
+  S("--llvm", llvm, stringToBool(arg)),
 
   S("-o", outfile, arg)
 };
@@ -1443,6 +1454,36 @@ void executeJIT(vector<unique_ptr<Instr>>& instrs) {
   return;
 }
 
+namespace llvm {
+
+Function* generateMainPrototype(std::unique_ptr<LLVMContext>& TheContext, std::unique_ptr<Module>& TheModule) {
+  // Make the function type:  double(double,double) etc.
+  FunctionType *FT =
+      FunctionType::get(Type::getInt32Ty(*TheContext), false);
+
+  Function *F =
+      Function::Create(FT, Function::ExternalLinkage, "main", TheModule.get());
+
+  return F;
+}
+
+void generateModule(const vector<unique_ptr<Instr>>& instrs) {
+  TheContext = make_unique<LLVMContext>();
+  Builder = make_unique<IRBuilder<>>(*TheContext);
+  TheModule = make_unique<Module>("module", *TheContext);
+
+  Function* prototype = generateMainPrototype(TheContext, TheModule);
+
+  for(size_t i = 0; i < instrs.size(); ++i)
+    cout << i << endl;
+
+  TheModule->dump();
+  auto res = llvm::verifyModule(*TheModule, &llvm::errs());
+  assert(!res);
+}
+
+} // end namespace llvm
+
 int main(int argc, char** argv) {
   MySettings settings = parse_settings(argc, argv);
 
@@ -1463,6 +1504,10 @@ int main(int argc, char** argv) {
     exit(-1);
   }
 
+  if(settings.llvm && settings.vectorizeMemScans) {
+    cerr << "Note: Vectorized mem scans are not currently supported when generating LLVM IR" << endl;
+  }
+
   const vector<Op> ops = readFile(settings.infile.value());
 
   if(!checkValidInstrs(ops)) {
@@ -1478,6 +1523,12 @@ int main(int argc, char** argv) {
   }
 
   instrs = optimize(instrs, settings);
+
+  if(settings.llvm) {
+    llvm::generateModule(instrs);
+
+    return EXIT_SUCCESS;
+  }
 
   string program = compile(instrs);
 

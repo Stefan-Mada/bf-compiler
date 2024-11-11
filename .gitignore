@@ -6,3 +6,6 @@ bftest/
 bfcheck/
 scratch/
 scan/
+.cache
+build
+buildDebug
