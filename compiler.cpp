@@ -41,7 +41,7 @@ struct MySettings {
   bool runInstCombine {true};
   bool partialEval {false};
   bool justInTime {false};
-  bool llvm {true};
+  bool llvm {false};
   optional<string> infile;
   optional<string> outfile;
 };
@@ -1720,7 +1720,14 @@ int main(int argc, char** argv) {
   if(settings.llvm) {
     llvm::generateModule(instrs);
 
-    TheModule->print(llvm::outs(), nullptr);    
+    if(!settings.outfile)
+      TheModule->print(llvm::outs(), nullptr);    
+    else {
+      std::error_code err;
+      llvm::raw_fd_ostream outStream(settings.outfile.value(), err);
+      TheModule->print(outStream, nullptr);    
+    }
+
     return EXIT_SUCCESS;
   }
 
