@@ -1467,15 +1467,48 @@ Function* generateMainPrototype(std::unique_ptr<LLVMContext>& TheContext, std::u
   return F;
 }
 
+vector<BasicBlock*> generateBBStubs(const vector<unique_ptr<Instr>>& instrs, std::unique_ptr<Module>& TheModule, std::unique_ptr<LLVMContext>& TheContext, Function* func) {
+  BasicBlock* entry = BasicBlock::Create(*TheContext, "entry", func);
+  vector<BasicBlock*> BBs;
+  BBs.push_back(entry);
+
+  for(const auto& instr : instrs) {
+    if(const JumpInstr *const jump = dynamic_cast<JumpInstr*>(instr.get())) {
+      auto [ownlabel, targetlabel] = jump->getLabels();
+
+      BasicBlock* nextBB = BasicBlock::Create(*TheContext, ownlabel, func);
+      BBs.push_back(nextBB);
+    }
+  }
+
+  return BBs;
+}
+
 void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   TheContext = make_unique<LLVMContext>();
   Builder = make_unique<IRBuilder<>>(*TheContext);
   TheModule = make_unique<Module>("module", *TheContext);
 
   Function* prototype = generateMainPrototype(TheContext, TheModule);
+  auto blocks = generateBBStubs(instrs, TheModule, TheContext, prototype);
 
-  for(size_t i = 0; i < instrs.size(); ++i)
-    cout << i << endl;
+  // initialize the tape
+  Builder->SetInsertPoint(blocks[0]);
+  // Step 1: Allocate 320,000 i8s on the stack
+  Type *i8Type = Builder->getInt8Ty();
+  Value *arraySize = Builder->getInt32(TAPESIZE); // Set array size to 320,000
+  AllocaInst *allocaInst = Builder->CreateAlloca(i8Type, arraySize, "tape");
+
+  // Step 2: Initialize allocated memory to 0 using memset
+  Value *zeroValue = Builder->getInt8(0); // Value to set (0)
+  Value *sizeInBytes = Builder->getInt32(TAPESIZE); // Size in bytes (320,000)
+  Builder->CreateMemSet(allocaInst, zeroValue, sizeInBytes, MaybeAlign(16));
+
+  // Step 3: Calculate pointer to midpoint (160,000 bytes offset)
+  Value *midpointIndex = Builder->getInt32(160000); // Offset by 160,000 bytes
+  Value *midpointPtr = Builder->CreateGEP(i8Type, allocaInst, midpointIndex, "midpointPtr");
+
+  // ==== Tape is now initialized, good to start code gen ==== 
 
   TheModule->dump();
   auto res = llvm::verifyModule(*TheModule, &llvm::errs());
