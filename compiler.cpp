@@ -36,9 +36,9 @@ constexpr size_t TAPESIZE = 320'000;
 // https://blog.vito.nyc/posts/min-guide-to-cli/
 struct MySettings {
   bool help{false};
-  bool simplifySimpleLoops {true};
+  bool simplifySimpleLoops {false};
   bool vectorizeMemScans {true};
-  bool runInstCombine {true};
+  bool runInstCombine {false};
   bool partialEval {false};
   bool justInTime {false};
   bool llvm {true};
@@ -1468,9 +1468,11 @@ Function* generateMainPrototype(std::unique_ptr<LLVMContext>& TheContext, std::u
   return F;
 }
 
-vector<BasicBlock*> generateBBStubs(const vector<unique_ptr<Instr>>& instrs, std::unique_ptr<Module>& TheModule, std::unique_ptr<LLVMContext>& TheContext, Function* func) {
+// vector of all basic blocks, and a mapping for a label to a basic block
+pair<vector<BasicBlock*>, unordered_map<string, BasicBlock*>> generateBBStubs(const vector<unique_ptr<Instr>>& instrs, std::unique_ptr<Module>& TheModule, std::unique_ptr<LLVMContext>& TheContext, Function* func) {
   BasicBlock* entry = BasicBlock::Create(*TheContext, "entry", func);
   vector<BasicBlock*> BBs;
+  unordered_map<string, BasicBlock*> posMap;
   BBs.push_back(entry);
 
   for(const auto& instr : instrs) {
@@ -1479,10 +1481,11 @@ vector<BasicBlock*> generateBBStubs(const vector<unique_ptr<Instr>>& instrs, std
 
       BasicBlock* nextBB = BasicBlock::Create(*TheContext, ownlabel, func);
       BBs.push_back(nextBB);
+      posMap[ownlabel] = nextBB;
     }
   }
 
-  return BBs;
+  return {BBs, posMap};
 }
 
 void generateModule(const vector<unique_ptr<Instr>>& instrs) {
@@ -1491,7 +1494,7 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   TheModule = make_unique<Module>("module", *TheContext);
 
   Function* prototype = generateMainPrototype(TheContext, TheModule);
-  auto blocks = generateBBStubs(instrs, TheModule, TheContext, prototype);
+  auto [blocks, labelToBBIndex] = generateBBStubs(instrs, TheModule, TheContext, prototype);
 
   // ==== Set up reference to putchar and getchar ====
   FunctionType *putcharType = FunctionType::get(Builder->getInt32Ty(), {Builder->getInt32Ty()}, false);
@@ -1517,6 +1520,11 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   Value *midpointPtr = Builder->CreateGEP(i8Type, allocaInst, midpointIndex, "midpointPtr");
 
   // ==== Tape is now initialized, good to start code gen ==== 
+
+  // This is a weird data structure, the label for the terminator of this block (name of next block)
+  // will give the basic block and final memory pointer of that block for phi purposes
+  unordered_map<string, pair<BasicBlock*, Value*>> jnzFarPhiInfo;
+
   size_t bbIndex = 0;
   Value* lastTapePos = midpointPtr;
   for(const auto& instr : instrs) {
@@ -1556,6 +1564,41 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
         Builder->CreateStore(retVal, lastTapePos);
         break;
       }
+      case JumpIfZero: {
+        Value *zero = Builder->getInt8(0);
+        Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        Value *isZero = Builder->CreateICmpEQ(currentTapeVal, zero);
+        const JumpInstr *const jump = dynamic_cast<JumpInstr*>(instr.get());
+        const auto& [ownlabel, targetlabel] = jump->getLabels();
+
+        Builder->CreateCondBr(isZero, labelToBBIndex.at(targetlabel),blocks[bbIndex + 1]);
+
+        // now need to save information for phi nodes in the future
+        jnzFarPhiInfo[ownlabel] = {blocks[bbIndex], lastTapePos};
+
+        // continue
+        Builder->SetInsertPoint(blocks[++bbIndex]);
+        break;
+      }
+      case JumpUnlessZero: {
+        Value *zero = Builder->getInt8(0);
+        Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        Value *isNotZero = Builder->CreateICmpNE(currentTapeVal, zero);
+        const JumpInstr *const jump = dynamic_cast<JumpInstr*>(instr.get());
+        const auto& [ownlabel, targetlabel] = jump->getLabels();
+
+        Builder->CreateCondBr(isNotZero, labelToBBIndex.at(targetlabel),blocks[bbIndex + 1]);
+        Builder->SetInsertPoint(blocks[++bbIndex]);
+
+        // create phi instruction to keep the world from collapsing
+        PHINode* phi = Builder->CreatePHI(lastTapePos->getType(), 2);
+
+        phi->addIncoming(lastTapePos, blocks[bbIndex - 1]);
+        auto& [otherBlock, otherTapePos] = jnzFarPhiInfo[targetlabel];
+        phi->addIncoming(otherTapePos, otherBlock);
+        lastTapePos = phi;
+        break;
+      }
       case EndOfFile: {
         Value *retVal = Builder->getInt32(0);
         Builder->CreateRet(retVal);
@@ -1566,6 +1609,8 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
       }
     }
   }
+
+  TheModule->dump();
 
   auto res = llvm::verifyModule(*TheModule, &llvm::errs());
   assert(!res);
