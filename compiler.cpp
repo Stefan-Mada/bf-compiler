@@ -36,9 +36,9 @@ constexpr size_t TAPESIZE = 320'000;
 // https://blog.vito.nyc/posts/min-guide-to-cli/
 struct MySettings {
   bool help{false};
-  bool simplifySimpleLoops {false};
+  bool simplifySimpleLoops {true};
   bool vectorizeMemScans {false};
-  bool runInstCombine {false};
+  bool runInstCombine {true};
   bool partialEval {false};
   bool justInTime {false};
   bool llvm {true};
@@ -1621,13 +1621,55 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
         Builder->CreateRet(retVal);
         break;
       }
+      case Zero: {
+        Value *zero = Builder->getInt8(0);
+        Builder->CreateStore(zero, lastTapePos);
+        break;
+      }
+      case Sum: {
+        auto sum = dynamic_cast<SumInstr*>(instr.get());
+        auto [amount, offset] = sum->amountAndOffset();
+        Value *offsetVal = Builder->getInt32(offset);
+        auto offsetPtr = Builder->CreateGEP(i8Type, lastTapePos, offsetVal);
+
+        Value *offsetValBefore = Builder->CreateLoad(Builder->getInt8Ty(), offsetPtr);
+        Value *sumAmount = Builder->getInt8(amount);
+        Value *newValue = Builder->CreateAdd(offsetValBefore, sumAmount);
+        Builder->CreateStore(newValue, offsetPtr);
+        break;
+      }
+      case MulAdd: {
+        auto muladd = dynamic_cast<MulAddInstr*>(instr.get());
+        auto [amount, offset, posInc] = muladd->amountOffsetPosInc();
+
+        Value *currTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        if(posInc)
+          currTapeVal = Builder->CreateNeg(currTapeVal);
+
+        Value *mulAmount = Builder->getInt8(amount);
+        Value *mulResult = Builder->CreateMul(currTapeVal, mulAmount);
+
+        Value *offsetVal = Builder->getInt32(offset);
+        auto storePtr = Builder->CreateGEP(i8Type, lastTapePos, offsetVal);
+        Value *offsetValBefore = Builder->CreateLoad(Builder->getInt8Ty(), storePtr);
+        Value *newValue = Builder->CreateAdd(offsetValBefore, mulResult);
+
+        Builder->CreateStore(newValue, storePtr);
+        break;
+      }
+      case AddMemPtr: {
+        auto addMemPtrInstr = dynamic_cast<AddMemPointerInstr*>(instr.get());
+        int64_t amount = addMemPtrInstr->getAmount();
+
+        Value *increment = Builder->getInt32(amount);
+        lastTapePos = Builder->CreateGEP(i8Type, lastTapePos, increment);
+        break;
+      }
       default: {
         throw invalid_argument("Unsupported instruction for LLVM IR generation of " + to_string(instr->op));
       }
     }
   }
-
-  TheModule->dump();
 
   auto res = llvm::verifyModule(*TheModule, &llvm::errs());
   assert(!res);
