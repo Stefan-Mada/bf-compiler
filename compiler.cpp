@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 #include <cstring>
 #include <sstream>
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -38,7 +39,7 @@ struct MySettings {
   bool simplifySimpleLoops {true};
   bool vectorizeMemScans {true};
   bool runInstCombine {true};
-  bool partialEval {true};
+  bool partialEval {false};
   bool justInTime {false};
   bool llvm {true};
   optional<string> infile;
@@ -1492,7 +1493,14 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   Function* prototype = generateMainPrototype(TheContext, TheModule);
   auto blocks = generateBBStubs(instrs, TheModule, TheContext, prototype);
 
-  // initialize the tape
+  // ==== Set up reference to putchar and getchar ====
+  FunctionType *putcharType = FunctionType::get(Builder->getInt32Ty(), {Builder->getInt32Ty()}, false);
+  FunctionType *getcharType = FunctionType::get(Builder->getInt32Ty(), false);
+
+  auto putcharFunc = TheModule->getOrInsertFunction("putchar", putcharType);
+  auto getcharFunc = TheModule->getOrInsertFunction("getchar", getcharType);
+
+  // ==== initialize the tape ====
   Builder->SetInsertPoint(blocks[0]);
   // Step 1: Allocate 320,000 i8s on the stack
   Type *i8Type = Builder->getInt8Ty();
@@ -1509,8 +1517,34 @@ void generateModule(const vector<unique_ptr<Instr>>& instrs) {
   Value *midpointPtr = Builder->CreateGEP(i8Type, allocaInst, midpointIndex, "midpointPtr");
 
   // ==== Tape is now initialized, good to start code gen ==== 
+  size_t bbIndex = 0;
+  Value* lastTapePos = midpointPtr;
+  for(const auto& instr : instrs) {
+    switch(instr->op) {
+      case Inc: {
+        Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        Value *increment = Builder->getInt8(1);
+        Value *newValue = Builder->CreateAdd(currentTapeVal, increment);
+        Builder->CreateStore(newValue, lastTapePos);
+        break;
+      }
+      case Write: {
+        Value *currentTapeVal = Builder->CreateLoad(Builder->getInt8Ty(), lastTapePos);
+        Value *extendedVal = Builder->CreateZExt(currentTapeVal, Builder->getInt32Ty());
+        Builder->CreateCall(putcharFunc, {extendedVal});
+        break;
+      }
+      case EndOfFile: {
+        Value *retVal = Builder->getInt32(0);
+        Builder->CreateRet(retVal);
+        break;
+      }
+      default: {
+        throw invalid_argument("Unsupported instruction for LLVM IR generation of " + to_string(instr->op));
+      }
+    }
+  }
 
-  TheModule->dump();
   auto res = llvm::verifyModule(*TheModule, &llvm::errs());
   assert(!res);
 }
@@ -1560,6 +1594,7 @@ int main(int argc, char** argv) {
   if(settings.llvm) {
     llvm::generateModule(instrs);
 
+    TheModule->print(llvm::outs(), nullptr);    
     return EXIT_SUCCESS;
   }
 
