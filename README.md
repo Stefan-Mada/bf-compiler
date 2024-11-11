@@ -2,11 +2,10 @@
 Just run the following commands to build this thing:
 
 ```shell
-$ make
-
-$ ./interpreter.out <insert bf file here>
-
-$ ./compiler.out <insert bf file here>
+$ mkdir build
+$ cd build
+$ cmake -DLLVM_DIR=/usr/lib/cmake/llvm -GNinja ..
+$ ninja
 ```
 
 ### Compiler Guide
